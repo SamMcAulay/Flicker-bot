@@ -8,7 +8,7 @@ class Economy(commands.Cog):
 
     @commands.Cog.listener()
     async def on_ready(self):
-        print('✅ Economy Cog loaded.')
+        print('Economy Cog loaded.')
 
     @commands.command(name="balance", aliases=["bal", "wallet", "b"])
     async def balance(self, ctx):
