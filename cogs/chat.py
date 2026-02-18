@@ -53,7 +53,6 @@ class Chat(commands.Cog):
             await message.channel.send(random.choice(responses))
             return
 
-        # --- CATEGORY 2: INDIRECT MENTIONS (1% Response Rate) ---
         if random.random() < 0.01:
             responses = [
                 "huh?",

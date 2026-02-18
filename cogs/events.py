@@ -16,9 +16,22 @@ class Events(commands.Cog):
         if message.author.bot or self.is_event_active:
             return
 
-        # 5% chance to start a game
-        if random.random() < 0.05:
-            await self.trigger_random_event(message.channel)
+        # Generate a random number from 0.0 to 1.0
+        chance = random.random()
+
+        # Logic: 5% Drop, 1% Trivia, 1% Math, 1% Fast Type
+        
+        if chance < 0.05: # 0% to 5%
+            await self.trigger_event(message.channel, "drop")
+            
+        elif chance < 0.06: # 5% to 6%
+            await self.trigger_event(message.channel, "trivia")
+            
+        elif chance < 0.07: # 6% to 7%
+            await self.trigger_event(message.channel, "math")
+            
+        elif chance < 0.08: # 7% to 8%
+            await self.trigger_event(message.channel, "fast_type")
 
     # --- DEV TOOL ---
     @commands.command(name="simulate", hidden=True)
@@ -29,30 +42,20 @@ class Events(commands.Cog):
             await ctx.send("⚠️ I'm already playing a game!")
             return
 
-        await ctx.send(f"🪄 **Poof!** Summoning a {game_type if game_type else 'random'} game...")
-        self.is_event_active = True
-        try:
-            if game_type == "math": await self.event_math(ctx.channel)
-            elif game_type == "trivia": await self.event_trivia(ctx.channel)
-            elif game_type == "fast_type": await self.event_fast_type(ctx.channel)
-            elif game_type == "drop": await self.event_drop(ctx.channel)
-            else: await self.trigger_random_event(ctx.channel)
-        except Exception as e:
-            await ctx.send(f"Oops! I tripped over a moon rock: {e}")
-        finally:
-            self.is_event_active = False
+        target_game = game_type if game_type else random.choice(["drop", "trivia", "math", "fast_type"])
+        await ctx.send(f"🪄 **Poof!** Summoning a {target_game} event...")
+        await self.trigger_event(ctx.channel, target_game)
 
-    async def trigger_random_event(self, channel):
+    # --- EVENT MANAGER ---
+    async def trigger_event(self, channel, game_type):
         self.is_event_active = True
-        # Weighted choice? Or pure random? Let's do pure random for now.
-        game_type = random.choice(["trivia", "fast_type", "math", "drop"])
         try:
             if game_type == "trivia": await self.event_trivia(channel)
             elif game_type == "fast_type": await self.event_fast_type(channel)
             elif game_type == "math": await self.event_math(channel)
             elif game_type == "drop": await self.event_drop(channel)
-        except Exception:
-            print("Event Error")
+        except Exception as e:
+            print(f"Event Error: {e}")
         finally:
             self.is_event_active = False
 
