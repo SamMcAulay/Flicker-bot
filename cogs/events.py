@@ -16,6 +16,7 @@ class Events(commands.Cog):
         if message.author.bot or self.is_event_active:
             return
 
+        # 5% chance to start a game
         if random.random() < 0.05:
             await self.trigger_random_event(message.channel)
 
@@ -23,55 +24,128 @@ class Events(commands.Cog):
     @commands.command(name="simulate", hidden=True)
     @commands.is_owner()
     async def simulate_event(self, ctx, game_type: str = None):
-        """Force an event to start."""
+        """Dev Tool: Force an event (!simulate drop/math/trivia/fast_type)"""
         if self.is_event_active:
-            await ctx.send("⚠️ An event is already active!")
+            await ctx.send("⚠️ I'm already playing a game!")
             return
 
-        await ctx.send(f"🛠️ **Dev Mode:** Forcing {game_type if game_type else 'random'} event...")
-        
+        await ctx.send(f"🪄 **Poof!** Summoning a {game_type if game_type else 'random'} game...")
         self.is_event_active = True
         try:
-            if game_type == "math":
-                await self.event_math(ctx.channel)
-            elif game_type == "trivia":
-                await self.event_trivia(ctx.channel)
-            elif game_type == "fast_type":
-                await self.event_fast_type(ctx.channel)
-            else:
-                await self.trigger_random_event(ctx.channel)
+            if game_type == "math": await self.event_math(ctx.channel)
+            elif game_type == "trivia": await self.event_trivia(ctx.channel)
+            elif game_type == "fast_type": await self.event_fast_type(ctx.channel)
+            elif game_type == "drop": await self.event_drop(ctx.channel)
+            else: await self.trigger_random_event(ctx.channel)
         except Exception as e:
-            await ctx.send(f"Error: {e}")
+            await ctx.send(f"Oops! I tripped over a moon rock: {e}")
         finally:
             self.is_event_active = False
 
     async def trigger_random_event(self, channel):
         self.is_event_active = True
-        game_type = random.choice(["trivia", "fast_type", "math"])
-        
+        # Weighted choice? Or pure random? Let's do pure random for now.
+        game_type = random.choice(["trivia", "fast_type", "math", "drop"])
         try:
-            if game_type == "trivia":
-                await self.event_trivia(channel)
-            elif game_type == "fast_type":
-                await self.event_fast_type(channel)
-            elif game_type == "math":
-                await self.event_math(channel)
-        except Exception as e:
-            print(f"Error in event: {e}")
+            if game_type == "trivia": await self.event_trivia(channel)
+            elif game_type == "fast_type": await self.event_fast_type(channel)
+            elif game_type == "math": await self.event_math(channel)
+            elif game_type == "drop": await self.event_drop(channel)
+        except Exception:
+            print("Event Error")
         finally:
             self.is_event_active = False
 
-    # --- MINI GAMES ---
+    # --- WHIMSICAL MINI GAMES ---
+
+    async def event_drop(self, channel):
+        """Tier 1: Simple Pickup. Reward: 1-10"""
+        reward = random.randint(1, 10)
+        
+        embed = discord.Embed(
+            title="✨ Ooh! Shiny!",
+            description=f"Someone dropped a pouch of Stardust!\nType **catch** to pick it up!",
+            color=discord.Color.magenta()
+        )
+        await channel.send(embed=embed)
+
+        def check(m):
+            return m.channel == channel and not m.author.bot and m.content.lower().strip() == "catch"
+
+        try:
+            winner_msg = await self.bot.wait_for('message', check=check, timeout=15.0)
+            await update_balance(winner_msg.author.id, reward)
+            await channel.send(f"🤲 **Gotcha!** {winner_msg.author.mention} caught **{reward} Stardust**!")
+        except asyncio.TimeoutError:
+            await channel.send(f"💨 **Poof!** The Stardust blew away in the cosmic wind.")
+
+    async def event_fast_type(self, channel):
+        """Tier 2: Fast Type. Reward: 10-20"""
+        reward = random.randint(10, 20)
+        
+        chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+        target_code = f"{''.join(random.choices(chars, k=3))}-{''.join(random.choices(chars, k=3))}"
+        
+        embed = discord.Embed(
+            title="💫 Catch the Falling Star!",
+            description=f"Quick! Type this magic spell before it disappears:\n\n`{target_code}`",
+            color=discord.Color.gold()
+        )
+        await channel.send(embed=embed)
+
+        def check(m):
+            return m.channel == channel and not m.author.bot and m.content == target_code
+
+        try:
+            winner_msg = await self.bot.wait_for('message', check=check, timeout=10.0)
+            await update_balance(winner_msg.author.id, reward)
+            await channel.send(f"🌟 **Caught it!** {winner_msg.author.mention} snagged **{reward} Stardust**!")
+        except asyncio.TimeoutError:
+            await channel.send(f"💨 **Whoosh!** It flew away. The spell was `{target_code}`.")
+
+    async def event_math(self, channel):
+        """Tier 3: Math. Reward: 20-40"""
+        reward = random.randint(20, 40)
+        
+        a = random.randint(2, 9)
+        b = random.randint(10, 20)
+        c = random.randint(1, 50)
+        op_type = random.choice(["mul_add", "sub_add"])
+        
+        if op_type == "mul_add":
+            equation = f"{a} × {b} + {c}"
+            answer = (a * b) + c
+        else:
+            equation = f"{b} + {c} - {a}"
+            answer = b + c - a
+
+        embed = discord.Embed(
+            title="🧩 Starship Puzzle!",
+            description=f"Help me count the moons! What is:\n\n**{equation}**",
+            color=discord.Color.teal()
+        )
+        await channel.send(embed=embed)
+
+        def check(m):
+            return m.channel == channel and not m.author.bot and m.content == str(answer)
+
+        try:
+            winner_msg = await self.bot.wait_for('message', check=check, timeout=12.0)
+            await update_balance(winner_msg.author.id, reward)
+            await channel.send(f"🤖 **Thank you!** {winner_msg.author.mention} solved the puzzle! **{reward} Stardust** for you!")
+        except asyncio.TimeoutError:
+            await channel.send(f"💤 **I fell asleep counting...** The answer was **{answer}**.")
 
     async def event_trivia(self, channel):
-        """Science Trivia. Reward: 10,000"""
+        """Tier 4: Trivia. Reward: 50-100"""
+        reward = random.randint(50, 100)
+        
         url = "https://opentdb.com/api.php?amount=1&category=17&type=multiple"
 
         async with aiohttp.ClientSession() as session:
             async with session.get(url) as response:
                 if response.status == 200:
                     data = await response.json()
-                    
                     q_data = data["results"][0]
                     question_text = html.unescape(q_data["question"]).strip()
                     correct_answer = html.unescape(q_data["correct_answer"]).strip()
@@ -94,95 +168,26 @@ class Events(commands.Cog):
                         valid_inputs.append(option.lower())
 
                     embed = discord.Embed(
-                        title="📡 Incoming Transmission: Trivia!",
-                        description=f"{question_text}\n\n{options_text}\n*You have ONE chance. Type the letter or answer!*",
-                        color=discord.Color.blue()
+                        title="✨ A Little Star Told Me...",
+                        description=f"{question_text}\n\n{options_text}\n*Make a wish and pick an answer!*",
+                        color=discord.Color.purple()
                     )
                     await channel.send(embed=embed)
                     
                     def check(m):
-                        if m.channel != channel or m.author.bot:
-                            return False
-                        user_input = m.content.lower().strip()
-                        return user_input in valid_inputs
+                        return m.channel == channel and not m.author.bot and m.content.lower().strip() in valid_inputs
 
                     try:
                         msg = await self.bot.wait_for('message', check=check, timeout=30.0)
                         user_input = msg.content.lower().strip()
                         
                         if user_input == correct_letter.lower() or user_input == correct_answer.lower():
-                            await update_balance(msg.author.id, 10000)
-                            await channel.send(f"🎉 **Correct!** The answer was **{correct_answer}**. {msg.author.mention} wins **10,000 Stardust**!")
+                            await update_balance(msg.author.id, reward)
+                            await channel.send(f"🎉 **Woohoo!** That's right! The answer was **{correct_answer}**. {msg.author.mention} caught **{reward} Stardust**!")
                         else:
-                            await channel.send(f"❌ **Incorrect!** {msg.author.mention} destabilized the signal. The correct answer was **{correct_answer}**.")
-                            
+                            await channel.send(f"☁️ **Oh no!** That wasn't quite right. The answer was **{correct_answer}**.")
                     except asyncio.TimeoutError:
-                        await channel.send(f"❌ Signal lost. The correct answer was **{correct_answer}**.")
-                else:
-                    print("API Error")
-
-    async def event_fast_type(self, channel):
-        """Type a randomized alphanumeric code! Reward: 5,000"""
-        chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
-        part1 = "".join(random.choices(chars, k=3))
-        part2 = "".join(random.choices(chars, k=2))
-        target_code = f"{part1}-{part2}"
-        
-        reward = 5000
-
-        embed = discord.Embed(
-            title="⚡ SECURITY BREACH DETECTED",
-            description=f"Override code required! Type this exactly:\n\n`{target_code}`",
-            color=discord.Color.red()
-        )
-        await channel.send(embed=embed)
-
-        def check(m):
-            return m.channel == channel and not m.author.bot and m.content == target_code
-
-        try:
-            winner_msg = await self.bot.wait_for('message', check=check, timeout=10.0)
-            await update_balance(winner_msg.author.id, reward)
-            await channel.send(f"✅ **Access Granted.** {winner_msg.author.mention} secured **{reward:,} Stardust**!")
-        except asyncio.TimeoutError:
-            await channel.send(f"⚠️ **Breach failed.** The code was `{target_code}`.")
-
-    async def event_math(self, channel):
-        """Two-step mental math. Reward: 3,000"""
-        a = random.randint(2, 9)
-        b = random.randint(10, 20)
-        c = random.randint(1, 50)
-        
-        op_type = random.choice(["mul_add", "sub_add", "double_add"])
-        
-        if op_type == "mul_add":
-            equation = f"{a} × {b} + {c}"
-            answer = (a * b) + c
-        elif op_type == "sub_add":
-            equation = f"{b} + {c} - {a}"
-            answer = b + c - a
-        else:
-            equation = f"{c} + {b} + {a}"
-            answer = c + b + a
-            
-        reward = 3000
-
-        embed = discord.Embed(
-            title="🧮 Navigation Systems Offline",
-            description=f"Calculate quickly to restore power:\n\n**{equation}**",
-            color=discord.Color.orange()
-        )
-        await channel.send(embed=embed)
-
-        def check(m):
-            return m.channel == channel and not m.author.bot and m.content == str(answer)
-
-        try:
-            winner_msg = await self.bot.wait_for('message', check=check, timeout=12.0)
-            await update_balance(winner_msg.author.id, reward)
-            await channel.send(f"🔋 **Systems Online.** {winner_msg.author.mention} calculated the solution: **{reward:,} Stardust**!")
-        except asyncio.TimeoutError:
-            await channel.send(f"❌ **System Failure.** The answer was **{answer}**.")
+                        await channel.send(f"🌙 **The stars have faded.** The answer was **{correct_answer}**.")
 
 async def setup(bot):
     await bot.add_cog(Events(bot))
