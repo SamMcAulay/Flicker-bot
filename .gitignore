@@ -3,6 +3,10 @@ __pycache__/
 *.py[codz]
 *$py.class
 
+# database
+*.db
+flicker.db
+
 # C extensions
 *.so
 
