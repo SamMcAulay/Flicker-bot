@@ -1,6 +1,10 @@
 import aiosqlite
+import os
 
-DB_NAME = "flicker.db"
+if os.getenv("RAILWAY_ENVIRONMENT"):
+    DB_NAME = "/data/flicker.db"
+else:
+    DB_NAME = "flicker.db"
 
 async def init_db():
     """Initializes the database tables."""
