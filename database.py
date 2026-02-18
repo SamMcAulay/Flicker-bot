@@ -7,27 +7,27 @@ else:
     DB_NAME = "flicker.db"
 
 async def init_db():
-    """Initializes the database tables."""
     async with aiosqlite.connect(DB_NAME) as db:
+        # Users Table
+        await db.execute("CREATE TABLE IF NOT EXISTS users (user_id INTEGER PRIMARY KEY, balance INTEGER DEFAULT 0)")
+        # Allowed Channels Table
+        await db.execute("CREATE TABLE IF NOT EXISTS allowed_channels (channel_id INTEGER PRIMARY KEY)")
+        # Shop Locks Table - Tracks which message_id has an open ticket
         await db.execute("""
-            CREATE TABLE IF NOT EXISTS users (
-                user_id INTEGER PRIMARY KEY,
-                balance INTEGER DEFAULT 0
-            )
-        """)
-        await db.execute("""
-            CREATE TABLE IF NOT EXISTS allowed_channels (
-                channel_id INTEGER PRIMARY KEY
+            CREATE TABLE IF NOT EXISTS shop_locks (
+                message_id INTEGER PRIMARY KEY,
+                ticket_channel_id INTEGER,
+                buyer_id INTEGER
             )
         """)
         await db.commit()
 
+# --- ECONOMY ---
 async def get_balance(user_id: int) -> int:
     async with aiosqlite.connect(DB_NAME) as db:
         async with db.execute("SELECT balance FROM users WHERE user_id = ?", (user_id,)) as cursor:
             row = await cursor.fetchone()
-            if row:
-                return row[0]
+            if row: return row[0]
             else:
                 await db.execute("INSERT INTO users (user_id, balance) VALUES (?, ?)", (user_id, 0))
                 await db.commit()
@@ -41,22 +41,38 @@ async def update_balance(user_id: int, amount: int) -> int:
         await db.commit()
     return new_balance
 
-
+# --- CHANNELS ---
 async def add_allowed_channel(channel_id: int):
-    """Adds a channel to the allowlist."""
     async with aiosqlite.connect(DB_NAME) as db:
         await db.execute("INSERT OR IGNORE INTO allowed_channels (channel_id) VALUES (?)", (channel_id,))
         await db.commit()
 
 async def remove_allowed_channel(channel_id: int):
-    """Removes a channel from the allowlist."""
     async with aiosqlite.connect(DB_NAME) as db:
         await db.execute("DELETE FROM allowed_channels WHERE channel_id = ?", (channel_id,))
         await db.commit()
 
 async def get_allowed_channels():
-    """Returns a list of all allowed channel IDs."""
     async with aiosqlite.connect(DB_NAME) as db:
         async with db.execute("SELECT channel_id FROM allowed_channels") as cursor:
             rows = await cursor.fetchall()
-            return [row[0] for row in rows] # Returns a simple list like [123, 456, 789]
+            return [row[0] for row in rows]
+
+# --- SHOP LOCKS ---
+async def is_listing_locked(message_id: int) -> bool:
+    """Checks if a listing currently has an active ticket."""
+    async with aiosqlite.connect(DB_NAME) as db:
+        async with db.execute("SELECT ticket_channel_id FROM shop_locks WHERE message_id = ?", (message_id,)) as cursor:
+            return await cursor.fetchone() is not None
+
+async def lock_listing(message_id: int, ticket_channel_id: int, buyer_id: int):
+    """Locks the listing so no one else can buy it."""
+    async with aiosqlite.connect(DB_NAME) as db:
+        await db.execute("INSERT INTO shop_locks (message_id, ticket_channel_id, buyer_id) VALUES (?, ?, ?)", (message_id, ticket_channel_id, buyer_id))
+        await db.commit()
+
+async def unlock_listing(ticket_channel_id: int):
+    """Unlocks the listing when the ticket is closed."""
+    async with aiosqlite.connect(DB_NAME) as db:
+        await db.execute("DELETE FROM shop_locks WHERE ticket_channel_id = ?", (ticket_channel_id,))
+        await db.commit()
