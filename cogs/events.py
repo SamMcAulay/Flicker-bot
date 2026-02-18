@@ -3,6 +3,7 @@ import random
 import asyncio
 import aiohttp
 import html
+import time
 from discord.ext import commands
 from database import update_balance
 
@@ -10,50 +11,60 @@ class Events(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
         self.is_event_active = False 
+        self.last_event_time = 0
+        self.cooldown_seconds = 120
 
     @commands.Cog.listener()
     async def on_message(self, message):
         if message.author.bot or self.is_event_active:
             return
 
-        # Generate a random number from 0.0 to 1.0
+        if time.time() - self.last_event_time < self.cooldown_seconds:
+            return
+
         chance = random.random()
 
-        # Logic: 5% Drop, 1% Trivia, 1% Math, 1% Fast Type
-        
-        if chance < 0.05: # 0% to 5%
+        # Total Chance: 8% (5% Drop, 1% Trivia, 1% Math, 1% Fast Type)
+        if chance < 0.05: # 0% - 5%
             await self.trigger_event(message.channel, "drop")
             
-        elif chance < 0.06: # 5% to 6%
+        elif chance < 0.06: # 5% - 6%
             await self.trigger_event(message.channel, "trivia")
             
-        elif chance < 0.07: # 6% to 7%
+        elif chance < 0.07: # 6% - 7%
             await self.trigger_event(message.channel, "math")
             
-        elif chance < 0.08: # 7% to 8%
+        elif chance < 0.08: # 7% - 8%
             await self.trigger_event(message.channel, "fast_type")
 
     # --- DEV TOOL ---
     @commands.command(name="simulate", hidden=True)
     @commands.is_owner()
     async def simulate_event(self, ctx, game_type: str = None):
-        """Dev Tool: Force an event (!simulate drop/math/trivia/fast_type)"""
+        """Dev Tool: Bypass cooldowns and force an event."""
         if self.is_event_active:
             await ctx.send("⚠️ I'm already playing a game!")
             return
 
         target_game = game_type if game_type else random.choice(["drop", "trivia", "math", "fast_type"])
-        await ctx.send(f"🪄 **Poof!** Summoning a {target_game} event...")
+        await ctx.send(f"🪄 **Poof!** Summoning a {target_game} event... (Cooldown bypassed)")
+        
         await self.trigger_event(ctx.channel, target_game)
 
     # --- EVENT MANAGER ---
     async def trigger_event(self, channel, game_type):
         self.is_event_active = True
+        self.last_event_time = time.time()
+        
         try:
-            if game_type == "trivia": await self.event_trivia(channel)
-            elif game_type == "fast_type": await self.event_fast_type(channel)
-            elif game_type == "math": await self.event_math(channel)
-            elif game_type == "drop": await self.event_drop(channel)
+            if game_type == "trivia":
+                await self.event_trivia(channel)
+            elif game_type == "fast_type":
+                await self.event_fast_type(channel)
+            elif game_type == "math":
+                await self.event_math(channel)
+            elif game_type == "drop":
+                await self.event_drop(channel)
         except Exception as e:
             print(f"Event Error: {e}")
         finally:
@@ -149,6 +160,7 @@ class Events(commands.Cog):
             async with session.get(url) as response:
                 if response.status == 200:
                     data = await response.json()
+                    
                     q_data = data["results"][0]
                     question_text = html.unescape(q_data["question"]).strip()
                     correct_answer = html.unescape(q_data["correct_answer"]).strip()
@@ -178,7 +190,9 @@ class Events(commands.Cog):
                     await channel.send(embed=embed)
                     
                     def check(m):
-                        return m.channel == channel and not m.author.bot and m.content.lower().strip() in valid_inputs
+                        if m.channel != channel or m.author.bot:
+                            return False
+                        return m.content.lower().strip() in valid_inputs
 
                     try:
                         msg = await self.bot.wait_for('message', check=check, timeout=30.0)
@@ -189,8 +203,11 @@ class Events(commands.Cog):
                             await channel.send(f"🎉 **Woohoo!** That's right! The answer was **{correct_answer}**. {msg.author.mention} caught **{reward} Stardust**!")
                         else:
                             await channel.send(f"☁️ **Oh no!** That wasn't quite right. The answer was **{correct_answer}**.")
+                            
                     except asyncio.TimeoutError:
                         await channel.send(f"🌙 **The stars have faded.** The answer was **{correct_answer}**.")
+                else:
+                    print("API Error")
 
 async def setup(bot):
     await bot.add_cog(Events(bot))
