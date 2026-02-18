@@ -8,18 +8,24 @@ else:
 
 async def init_db():
     async with aiosqlite.connect(DB_NAME) as db:
-        # Users Table
         await db.execute("CREATE TABLE IF NOT EXISTS users (user_id INTEGER PRIMARY KEY, balance INTEGER DEFAULT 0)")
-        # Allowed Channels Table
         await db.execute("CREATE TABLE IF NOT EXISTS allowed_channels (channel_id INTEGER PRIMARY KEY)")
-        # Shop Locks Table - Tracks which message_id has an open ticket
+        
         await db.execute("""
             CREATE TABLE IF NOT EXISTS shop_locks (
                 message_id INTEGER PRIMARY KEY,
                 ticket_channel_id INTEGER,
-                buyer_id INTEGER
+                buyer_id INTEGER,
+                shop_channel_id INTEGER
             )
         """)
+        
+        # Migration: Attempt to add the column if it's missing (for existing dbs)
+        try:
+            await db.execute("ALTER TABLE shop_locks ADD COLUMN shop_channel_id INTEGER")
+        except:
+            pass
+            
         await db.commit()
 
 # --- ECONOMY ---
@@ -60,19 +66,24 @@ async def get_allowed_channels():
 
 # --- SHOP LOCKS ---
 async def is_listing_locked(message_id: int) -> bool:
-    """Checks if a listing currently has an active ticket."""
     async with aiosqlite.connect(DB_NAME) as db:
         async with db.execute("SELECT ticket_channel_id FROM shop_locks WHERE message_id = ?", (message_id,)) as cursor:
             return await cursor.fetchone() is not None
 
-async def lock_listing(message_id: int, ticket_channel_id: int, buyer_id: int):
-    """Locks the listing so no one else can buy it."""
+async def lock_listing(message_id: int, ticket_channel_id: int, buyer_id: int, shop_channel_id: int):
+    """Locks the listing and stores location data."""
     async with aiosqlite.connect(DB_NAME) as db:
-        await db.execute("INSERT INTO shop_locks (message_id, ticket_channel_id, buyer_id) VALUES (?, ?, ?)", (message_id, ticket_channel_id, buyer_id))
+        await db.execute("INSERT INTO shop_locks (message_id, ticket_channel_id, buyer_id, shop_channel_id) VALUES (?, ?, ?, ?)", 
+                         (message_id, ticket_channel_id, buyer_id, shop_channel_id))
         await db.commit()
 
 async def unlock_listing(ticket_channel_id: int):
-    """Unlocks the listing when the ticket is closed."""
     async with aiosqlite.connect(DB_NAME) as db:
         await db.execute("DELETE FROM shop_locks WHERE ticket_channel_id = ?", (ticket_channel_id,))
         await db.commit()
+
+async def get_lock_details(ticket_channel_id: int):
+    """Retrieves info about the locked item using the ticket ID."""
+    async with aiosqlite.connect(DB_NAME) as db:
+        async with db.execute("SELECT message_id, buyer_id, shop_channel_id FROM shop_locks WHERE ticket_channel_id = ?", (ticket_channel_id,)) as cursor:
+            return await cursor.fetchone()

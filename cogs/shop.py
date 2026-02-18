@@ -2,9 +2,43 @@ import discord
 import asyncio
 import io
 from discord.ext import commands
-from database import get_balance, update_balance, is_listing_locked, lock_listing, unlock_listing
+from database import get_balance, update_balance, is_listing_locked, lock_listing, unlock_listing, get_lock_details
 
-# --- THE CLOSE TICKET BUTTON ---
+class AdminCloseView(discord.ui.View):
+    def __init__(self, message_id, shop_channel_id):
+        super().__init__(timeout=None)
+        self.message_id = message_id
+        self.shop_channel_id = shop_channel_id
+
+    @discord.ui.button(label="Yes! Delete Shop Post", style=discord.ButtonStyle.red, emoji="🗑️")
+    async def delete_post(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.defer()
+        
+        try:
+            shop_channel = interaction.guild.get_channel(self.shop_channel_id)
+            if shop_channel:
+                msg = await shop_channel.fetch_message(self.message_id)
+                await msg.delete()
+        except Exception as e:
+            print(f"Could not delete shop post: {e}")
+
+        await unlock_listing(interaction.channel.id)
+
+        await interaction.followup.send("🗑️ Shop post deleted. Closing ticket now...")
+        await asyncio.sleep(2)
+        await interaction.channel.delete()
+
+    @discord.ui.button(label="No thanks, just close ticket", style=discord.ButtonStyle.gray, emoji="🔒")
+    async def keep_post(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.defer()
+        
+        await unlock_listing(interaction.channel.id)
+
+        await interaction.followup.send("🔒 Listing kept. Closing ticket now...")
+        await asyncio.sleep(2)
+        await interaction.channel.delete()
+
+
 class TicketCloseView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=None)
@@ -13,15 +47,11 @@ class TicketCloseView(discord.ui.View):
     async def close_ticket(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.defer() 
         
-        # 1. Generate Transcript
         transcript_text = f"--- TRANSCRIPT FOR {interaction.channel.name} ---\n\n"
-        
         async for msg in interaction.channel.history(limit=None, oldest_first=True):
             timestamp = msg.created_at.strftime("%Y-%m-%d %H:%M:%S")
             author = f"{msg.author.name}#{msg.author.discriminator}" if msg.author.discriminator != "0" else msg.author.name
-            
             transcript_text += f"[{timestamp}] {author}: {msg.content}\n"
-            
             if msg.attachments:
                 for attachment in msg.attachments:
                     transcript_text += f"    [ATTACHMENT]: {attachment.url}\n"
@@ -31,8 +61,8 @@ class TicketCloseView(discord.ui.View):
             filename=f"transcript-{interaction.channel.name}.txt"
         )
 
-        # 2. Send Transcript to Logs
-        log_channel = discord.utils.get(interaction.guild.text_channels, name="flicker-ticket-logs")
+        log_channel_id = 1473785756219871463
+        log_channel = interaction.guild.get_channel(log_channel_id)
         
         if log_channel:
             embed = discord.Embed(
@@ -41,27 +71,33 @@ class TicketCloseView(discord.ui.View):
                 color=discord.Color.red()
             )
             await log_channel.send(embed=embed, file=transcript_file)
+        
+        details = await get_lock_details(interaction.channel.id)
+        
+        if details:
+            message_id, buyer_id, shop_channel_id = details
+            
+            buyer = interaction.guild.get_member(buyer_id)
+            if buyer:
+                await interaction.channel.set_permissions(buyer, overwrite=None)
+                await interaction.followup.send(f"🚫 Removed {buyer.mention} from the ticket.")
         else:
-            try:
-                await interaction.user.send(f"Here is the transcript for {interaction.channel.name}", file=transcript_file)
-            except:
-                pass 
+            message_id, shop_channel_id = 0, 0
+            await interaction.followup.send("⚠️ Could not find database record for this ticket.")
 
-        # 3. Unlock and Delete
-        await unlock_listing(interaction.channel.id)
-        await interaction.followup.send("✅ Transcript saved. Deleting channel in 5 seconds...")
-        await asyncio.sleep(5)
-        await interaction.channel.delete()
+        admin_embed = discord.Embed(
+            title="🛑 Ticket Closed",
+            description="The buyer has been removed.\n\n**Would you like to remove the original shop listing?**\n(Click 'Yes' if the item was sold. Click 'No' if the deal was cancelled).",
+            color=discord.Color.gold()
+        )
+        
+        view = AdminCloseView(message_id, shop_channel_id)
+        await interaction.channel.send(embed=admin_embed, view=view)
 
-# --- THE BUY BUTTONS ---
+
 class StardustButton(discord.ui.Button):
     def __init__(self, price):
-        super().__init__(
-            label=f"Buy for {price} Stardust", 
-            style=discord.ButtonStyle.blurple, 
-            emoji="✨",
-            custom_id=f"shop:stardust:{price}" 
-        )
+        super().__init__(label=f"Buy for {price} Stardust", style=discord.ButtonStyle.blurple, emoji="✨", custom_id=f"shop:stardust:{price}")
         self.price = price
 
     async def callback(self, interaction: discord.Interaction):
@@ -78,7 +114,9 @@ class StardustButton(discord.ui.Button):
             return
 
         await update_balance(user.id, -self.price)
+        await self.create_ticket(interaction, user, message_id)
 
+    async def create_ticket(self, interaction, user, message_id):
         guild = interaction.guild
         category = discord.utils.get(guild.categories, name="Orders")
         if not category: category = await guild.create_category("Orders")
@@ -90,11 +128,12 @@ class StardustButton(discord.ui.Button):
         }
 
         ticket_channel = await guild.create_text_channel(f"order-{user.name}", category=category, overwrites=overwrites)
-        await lock_listing(message_id, ticket_channel.id, user.id)
+        
+        await lock_listing(message_id, ticket_channel.id, user.id, interaction.channel.id)
 
         embed = discord.Embed(
             title="✨ Order Created",
-            description=f"**Buyer:** {user.mention}\n**Paid:** {self.price} Stardust\n**Item:** [View Original Listing]({interaction.message.jump_url})",
+            description=f"**Buyer:** {user.mention}\n**Paid:** {self.price} Stardust\n**Item:** [View Listing]({interaction.message.jump_url})",
             color=discord.Color.green()
         )
         embed.set_footer(text="Staff will process your order shortly.")
@@ -105,12 +144,7 @@ class StardustButton(discord.ui.Button):
 
 class USDButton(discord.ui.Button):
     def __init__(self, price):
-        super().__init__(
-            label=f"Buy for ${price} USD", 
-            style=discord.ButtonStyle.green, 
-            emoji="💵",
-            custom_id=f"shop:usd:{price}"
-        )
+        super().__init__(label=f"Buy for ${price} USD", style=discord.ButtonStyle.green, emoji="💵", custom_id=f"shop:usd:{price}")
         self.price = price
 
     async def callback(self, interaction: discord.Interaction):
@@ -132,7 +166,8 @@ class USDButton(discord.ui.Button):
         }
 
         ticket_channel = await guild.create_text_channel(f"inquiry-{user.name}", category=category, overwrites=overwrites)
-        await lock_listing(message_id, ticket_channel.id, user.id)
+        
+        await lock_listing(message_id, ticket_channel.id, user.id, interaction.channel.id)
 
         embed = discord.Embed(
             title="💵 Order Inquiry",
@@ -152,7 +187,6 @@ class ShopView(discord.ui.View):
         if usd_price > 0: self.add_item(USDButton(usd_price))
 
 
-# --- THE SHOP COG ---
 class Shop(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
@@ -165,29 +199,16 @@ class Shop(commands.Cog):
     @commands.command(name="shopPost")
     @commands.has_permissions(administrator=True)
     async def shop_post(self, ctx, channel: discord.TextChannel, stardust_price: int, usd_price: float, title: str, *, description: str):
-        """
-        Post a shop item.
-        Usage: Attach Image -> !shopPost #channel [Stardust] [USD] "Title" [Description]
-        """
-        
         if ctx.message.attachments:
             image_url = ctx.message.attachments[0].url
         else:
             await ctx.send("❌ **Missing Image!** Please attach an image to your command message.")
             return
 
-        # Use the provided 'title' variable here
-        embed = discord.Embed(
-            title=title, 
-            description=description, 
-            color=discord.Color.purple()
-        )
+        embed = discord.Embed(title=title, description=description, color=discord.Color.purple())
         embed.set_image(url=image_url)
-        
-        if stardust_price > 0:
-            embed.add_field(name="✨ Stardust Price", value=f"{stardust_price} Stardust", inline=True)
-        if usd_price > 0:
-            embed.add_field(name="💵 USD Price", value=f"${usd_price} USD", inline=True)
+        if stardust_price > 0: embed.add_field(name="✨ Stardust Price", value=f"{stardust_price} Stardust", inline=True)
+        if usd_price > 0: embed.add_field(name="💵 USD Price", value=f"${usd_price} USD", inline=True)
 
         view = ShopView(stardust_price, usd_price)
         await channel.send(embed=embed, view=view)
