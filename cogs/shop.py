@@ -4,6 +4,7 @@ import io
 from discord.ext import commands
 from database import get_balance, update_balance, is_listing_locked, lock_listing, unlock_listing
 
+# --- THE CLOSE TICKET BUTTON ---
 class TicketCloseView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=None)
@@ -12,6 +13,7 @@ class TicketCloseView(discord.ui.View):
     async def close_ticket(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.defer() 
         
+        # 1. Generate Transcript
         transcript_text = f"--- TRANSCRIPT FOR {interaction.channel.name} ---\n\n"
         
         async for msg in interaction.channel.history(limit=None, oldest_first=True):
@@ -29,6 +31,7 @@ class TicketCloseView(discord.ui.View):
             filename=f"transcript-{interaction.channel.name}.txt"
         )
 
+        # 2. Send Transcript to Logs
         log_channel = discord.utils.get(interaction.guild.text_channels, name="flicker-ticket-logs")
         
         if log_channel:
@@ -44,11 +47,13 @@ class TicketCloseView(discord.ui.View):
             except:
                 pass 
 
+        # 3. Unlock and Delete
         await unlock_listing(interaction.channel.id)
         await interaction.followup.send("✅ Transcript saved. Deleting channel in 5 seconds...")
         await asyncio.sleep(5)
         await interaction.channel.delete()
 
+# --- THE BUY BUTTONS ---
 class StardustButton(discord.ui.Button):
     def __init__(self, price):
         super().__init__(
@@ -147,6 +152,7 @@ class ShopView(discord.ui.View):
         if usd_price > 0: self.add_item(USDButton(usd_price))
 
 
+# --- THE SHOP COG ---
 class Shop(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
@@ -158,17 +164,30 @@ class Shop(commands.Cog):
 
     @commands.command(name="shopPost")
     @commands.has_permissions(administrator=True)
-    async def shop_post(self, ctx, channel: discord.TextChannel, stardust_price: int, usd_price: float, *, description: str):
+    async def shop_post(self, ctx, channel: discord.TextChannel, stardust_price: int, usd_price: float, title: str, *, description: str):
+        """
+        Post a shop item.
+        Usage: Attach Image -> !shopPost #channel [Stardust] [USD] "Title" [Description]
+        """
+        
         if ctx.message.attachments:
             image_url = ctx.message.attachments[0].url
         else:
             await ctx.send("❌ **Missing Image!** Please attach an image to your command message.")
             return
 
-        embed = discord.Embed(title="🛍️ New Shop Listing", description=description, color=discord.Color.purple())
+        # Use the provided 'title' variable here
+        embed = discord.Embed(
+            title=title, 
+            description=description, 
+            color=discord.Color.purple()
+        )
         embed.set_image(url=image_url)
-        if stardust_price > 0: embed.add_field(name="✨ Stardust Price", value=f"{stardust_price} Stardust", inline=True)
-        if usd_price > 0: embed.add_field(name="💵 USD Price", value=f"${usd_price} USD", inline=True)
+        
+        if stardust_price > 0:
+            embed.add_field(name="✨ Stardust Price", value=f"{stardust_price} Stardust", inline=True)
+        if usd_price > 0:
+            embed.add_field(name="💵 USD Price", value=f"${usd_price} USD", inline=True)
 
         view = ShopView(stardust_price, usd_price)
         await channel.send(embed=embed, view=view)
