@@ -1,5 +1,6 @@
 import discord
 import random
+import re
 from discord.ext import commands
 
 class Chat(commands.Cog):
@@ -12,43 +13,73 @@ class Chat(commands.Cog):
             return
 
         content = message.content.lower()
+        words = set(re.findall(r'\w+', content))
         
-        if "flicker" not in content:
+        if "flicker" not in words:
+            return
+        
+        love_triggers = ["ily", "love", "luv", "heart", "adore", "wub"]
+        
+        if any(w in words for w in love_triggers) or "i <3 you" in content:
+            responses = [
+                f"aww thank you, {message.author.mention}!",
+                "no problem!",
+                f"you're sweet, {message.author.mention}!",
+                "right back at you! ❤️",
+                "aww shucks! ❤️"
+            ]
+            await message.channel.send(random.choice(responses))
             return
 
-        # GREETINGS
-        if any(word in content for word in ["hi", "hello", "hey"]):
+        greeting_triggers = [
+            "hi", "hello", "hey", "heyy", "heyyy", "yo", "sup", 
+            "greetings", "howdy", "hiya", "hola", "bonjour", "wazzup", "oy", "heya", "heyo", "heller"
+        ]
+        
+        if any(w in words for w in greeting_triggers):
             if random.random() < 0.01:
                 response = f"I've been thinking about you, {message.author.mention}!"
             else:
                 responses = [
                     f"hey there {message.author.mention}!",
                     f"hi {message.author.mention}!",
-                    f"good to see you, {message.author.mention}!"
+                    f"good to see you, {message.author.mention}!",
+                    "beep boop! hello!",
+                    "greetings, friend!"
                 ]
                 response = random.choice(responses)
-            
             await message.channel.send(response)
             return
 
-        # GRATITUDE
-        if any(word in content for word in ["thank", "thanks"]):
+        gratitude_triggers = [
+            "thank", "thanks", "thx", "ty", "tysm", "appreciate", 
+            "cheers", "props", "gracias", "thnks"
+        ]
+        
+        if any(w in words for w in gratitude_triggers):
             responses = [
                 f"no problem, {message.author.mention}!",
                 "anytime!",
                 "of course!",
-                f"happy to help, {message.author.mention}!"
+                f"happy to help, {message.author.mention}!",
+                "you are very welcome!"
             ]
             await message.channel.send(random.choice(responses))
             return
 
-        # GOODBYES
-        if any(word in content for word in ["bye", "goodbye"]):
+        goodbye_triggers = [
+            "bye", "goodbye", "byee", "cya", "later", "laters", 
+            "night", "gn", "toodles", "peace", "adios", "farewell"
+        ]
+        
+        if any(w in words for w in goodbye_triggers) or "see ya" in content:
             responses = [
                 f"goodbye, {message.author.mention}!",
                 "later!",
                 f"have a good day, {message.author.mention}!",
-                "toodles!"
+                "toodles!",
+                "catch you on the flip side!",
+                "sleep well!"
             ]
             await message.channel.send(random.choice(responses))
             return
@@ -58,7 +89,8 @@ class Chat(commands.Cog):
                 "huh?",
                 f"are you talking about me, {message.author.mention}?",
                 "what?",
-                "that's me!"
+                "that's me!",
+                "did someone say my name?"
             ]
             await message.channel.send(random.choice(responses))
 
