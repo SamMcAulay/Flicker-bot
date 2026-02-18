@@ -164,7 +164,7 @@ class USDButton(discord.ui.Button):
 
     async def callback(self, interaction: discord.Interaction):
         message_id = interaction.message.id
-        
+
         item = await get_shop_item(message_id)
         if item:
             stock = item[0]
@@ -216,12 +216,30 @@ class Shop(commands.Cog):
         self.bot.add_view(TicketCloseView())
         print("🛒 Shop System Loaded.")
 
+    @commands.command(name="shopPost")
+    @commands.has_permissions(administrator=True)
+    async def shop_post(self, ctx, channel: discord.TextChannel, stardust_price: int, usd_price: float, title: str, *, description: str):
+        if ctx.message.attachments:
+            image_url = ctx.message.attachments[0].url
+        else:
+            await ctx.send("❌ **Missing Image!** Please attach an image to your command message.")
+            return
+
+        embed = discord.Embed(title=title, description=description, color=discord.Color.purple())
+        embed.set_image(url=image_url)
+        if stardust_price > 0: embed.add_field(name="✨ Stardust Price", value=f"{stardust_price} Stardust", inline=True)
+        if usd_price > 0: embed.add_field(name="💵 USD Price", value=f"${usd_price} USD", inline=True)
+
+        view = ShopView(stardust_price, usd_price)
+        await channel.send(embed=embed, view=view)
+        await ctx.send(f"✅ Listing posted in {channel.mention}!")
+
     @commands.command(name="shopStock")
     @commands.has_permissions(administrator=True)
     async def shop_stock(self, ctx, channel: discord.TextChannel, stock_input: str, stardust_price: int, usd_price: float, title: str, *, description: str):
         """
-        Post a shop item with Stock and optional Role/Image.
-        Usage: !shopStock #channel [Stock/"inf"] [Stardust] [USD] "Title" [Description] (Attach Image OR Mention Role)
+        Post a shop item with Stock + Role + Image support.
+        Usage: Attach Image AND/OR Mention Role -> !shopStock ...
         """
         
         if stock_input.lower() in ["inf", "infinity", "unlimited"]:
@@ -238,18 +256,20 @@ class Shop(commands.Cog):
         role_id = None
         image_url = None
 
+        if ctx.message.attachments:
+            image_url = ctx.message.attachments[0].url
+
         if ctx.message.role_mentions:
             role = ctx.message.role_mentions[0]
             role_id = role.id
             description = description.replace(role.mention, "").strip()
-        
-        if ctx.message.attachments:
-            image_url = ctx.message.attachments[0].url
-        elif role_id is None:
-            await ctx.send("❌ You must either **Attach an Image** OR **Mention a Role**.")
+
+        if not image_url and not role_id:
+            await ctx.send("❌ **Error:** You must attach an image OR mention a role (or both).")
             return
 
         embed = discord.Embed(title=title, description=description, color=discord.Color.purple())
+        
         if image_url:
             embed.set_image(url=image_url)
         
