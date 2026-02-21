@@ -30,6 +30,12 @@ async def init_db():
             )
         """)
         
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS verification_config (
+                guild_id INTEGER PRIMARY KEY,
+                role_id INTEGER
+            )
+        """)
         await db.commit()
 
 async def get_balance(user_id: int) -> int:
@@ -114,3 +120,17 @@ async def decrement_stock(message_id):
         if current_stock > 0:
             await db.execute("UPDATE shop_items SET stock = stock - 1 WHERE message_id = ?", (message_id,))
             await db.commit()
+
+# --- VERIFICATION SYSTEM ---
+async def set_verify_role(guild_id: int, role_id: int):
+    """Saves the verified role for the server."""
+    async with aiosqlite.connect(DB_NAME) as db:
+        await db.execute("INSERT OR REPLACE INTO verification_config (guild_id, role_id) VALUES (?, ?)", (guild_id, role_id))
+        await db.commit()
+
+async def get_verify_role(guild_id: int):
+    """Gets the verified role for the server."""
+    async with aiosqlite.connect(DB_NAME) as db:
+        async with db.execute("SELECT role_id FROM verification_config WHERE guild_id = ?", (guild_id,)) as cursor:
+            row = await cursor.fetchone()
+            return row[0] if row else None
