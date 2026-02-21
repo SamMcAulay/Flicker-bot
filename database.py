@@ -36,6 +36,14 @@ async def init_db():
                 role_id INTEGER
             )
         """)
+        
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS vc_config (
+                guild_id INTEGER PRIMARY KEY,
+                generator_vc_id INTEGER,
+                verified_role_id INTEGER
+            )
+        """)
         await db.commit()
 
 async def get_balance(user_id: int) -> int:
@@ -134,3 +142,17 @@ async def get_verify_role(guild_id: int):
         async with db.execute("SELECT role_id FROM verification_config WHERE guild_id = ?", (guild_id,)) as cursor:
             row = await cursor.fetchone()
             return row[0] if row else None
+
+# --- VOICE CHANNEL SYSTEM ---
+async def set_vc_config(guild_id: int, generator_vc_id: int, verified_role_id: int):
+    """Saves the VC generator configuration."""
+    async with aiosqlite.connect(DB_NAME) as db:
+        await db.execute("INSERT OR REPLACE INTO vc_config (guild_id, generator_vc_id, verified_role_id) VALUES (?, ?, ?)", 
+                         (guild_id, generator_vc_id, verified_role_id))
+        await db.commit()
+
+async def get_vc_config(guild_id: int):
+    """Gets the VC config: Returns (generator_vc_id, verified_role_id)"""
+    async with aiosqlite.connect(DB_NAME) as db:
+        async with db.execute("SELECT generator_vc_id, verified_role_id FROM vc_config WHERE guild_id = ?", (guild_id,)) as cursor:
+            return await cursor.fetchone()
