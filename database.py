@@ -10,11 +10,11 @@ async def init_db():
     async with aiosqlite.connect(DB_NAME) as db:
         await db.execute("CREATE TABLE IF NOT EXISTS users (user_id INTEGER PRIMARY KEY, balance INTEGER DEFAULT 0)")
         await db.execute("CREATE TABLE IF NOT EXISTS allowed_channels (channel_id INTEGER PRIMARY KEY)")
-        
+
         await db.execute("""
-            CREATE TABLE IF NOT EXISTS shop_locks (
-                message_id INTEGER PRIMARY KEY,
-                ticket_channel_id INTEGER,
+            CREATE TABLE IF NOT EXISTS active_tickets (
+                ticket_channel_id INTEGER PRIMARY KEY,
+                message_id INTEGER,
                 buyer_id INTEGER,
                 shop_channel_id INTEGER
             )
@@ -46,6 +46,7 @@ async def init_db():
         """)
         await db.commit()
 
+# --- ECONOMY ---
 async def get_balance(user_id: int) -> int:
     async with aiosqlite.connect(DB_NAME) as db:
         async with db.execute("SELECT balance FROM users WHERE user_id = ?", (user_id,)) as cursor:
@@ -64,6 +65,7 @@ async def update_balance(user_id: int, amount: int) -> int:
         await db.commit()
     return new_balance
 
+# --- ALLOWED CHANNELS ---
 async def add_allowed_channel(channel_id: int):
     async with aiosqlite.connect(DB_NAME) as db:
         await db.execute("INSERT OR IGNORE INTO allowed_channels (channel_id) VALUES (?)", (channel_id,))
@@ -80,27 +82,29 @@ async def get_allowed_channels():
             rows = await cursor.fetchall()
             return [row[0] for row in rows]
 
+# --- TICKET LOCKS (UPDATED) ---
 async def is_listing_locked(message_id: int) -> bool:
     async with aiosqlite.connect(DB_NAME) as db:
-        async with db.execute("SELECT ticket_channel_id FROM shop_locks WHERE message_id = ?", (message_id,)) as cursor:
+        async with db.execute("SELECT ticket_channel_id FROM active_tickets WHERE message_id = ?", (message_id,)) as cursor:
             return await cursor.fetchone() is not None
 
 async def lock_listing(message_id: int, ticket_channel_id: int, buyer_id: int, shop_channel_id: int):
     async with aiosqlite.connect(DB_NAME) as db:
-        await db.execute("INSERT INTO shop_locks (message_id, ticket_channel_id, buyer_id, shop_channel_id) VALUES (?, ?, ?, ?)", 
-                         (message_id, ticket_channel_id, buyer_id, shop_channel_id))
+        await db.execute("INSERT INTO active_tickets (ticket_channel_id, message_id, buyer_id, shop_channel_id) VALUES (?, ?, ?, ?)", 
+                         (ticket_channel_id, message_id, buyer_id, shop_channel_id))
         await db.commit()
 
 async def unlock_listing(ticket_channel_id: int):
     async with aiosqlite.connect(DB_NAME) as db:
-        await db.execute("DELETE FROM shop_locks WHERE ticket_channel_id = ?", (ticket_channel_id,))
+        await db.execute("DELETE FROM active_tickets WHERE ticket_channel_id = ?", (ticket_channel_id,))
         await db.commit()
 
 async def get_lock_details(ticket_channel_id: int):
     async with aiosqlite.connect(DB_NAME) as db:
-        async with db.execute("SELECT message_id, buyer_id, shop_channel_id FROM shop_locks WHERE ticket_channel_id = ?", (ticket_channel_id,)) as cursor:
+        async with db.execute("SELECT message_id, buyer_id, shop_channel_id FROM active_tickets WHERE ticket_channel_id = ?", (ticket_channel_id,)) as cursor:
             return await cursor.fetchone()
 
+# --- SHOP ITEMS ---
 async def create_shop_item(message_id, stock, role_id, stardust, usd):
     """Registers a new shop item in the DB."""
     async with aiosqlite.connect(DB_NAME) as db:

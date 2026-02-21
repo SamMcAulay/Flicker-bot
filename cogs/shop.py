@@ -22,7 +22,7 @@ class AdminCloseView(discord.ui.View):
                 msg = await shop_channel.fetch_message(self.message_id)
                 await msg.delete()
         except Exception as e:
-            print(f"Could not delete shop post: {e}")
+            pass # Message might already be deleted
 
         await unlock_listing(interaction.channel.id)
         await interaction.followup.send("🗑️ Shop post deleted. Closing ticket now...")
@@ -36,7 +36,6 @@ class AdminCloseView(discord.ui.View):
         await interaction.followup.send("🔒 Listing kept. Closing ticket now...")
         await asyncio.sleep(2)
         await interaction.channel.delete()
-
 
 class TicketCloseView(discord.ui.View):
     def __init__(self):
@@ -89,37 +88,33 @@ class TicketCloseView(discord.ui.View):
         view = AdminCloseView(message_id, shop_channel_id)
         await interaction.channel.send(embed=admin_embed, view=view)
 
+class ShopView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=None)
 
-class StardustButton(discord.ui.Button):
-    def __init__(self, price):
-        super().__init__(label=f"Buy for {price} Stardust", style=discord.ButtonStyle.blurple, emoji="✨", custom_id=f"shop:stardust:{price}")
-        self.price = price
-
-    async def callback(self, interaction: discord.Interaction):
+    @discord.ui.button(label="Buy with Stardust", style=discord.ButtonStyle.blurple, emoji="✨", custom_id="shop:btn_stardust")
+    async def btn_stardust(self, interaction: discord.Interaction, button: discord.ui.Button):
         message_id = interaction.message.id
         user = interaction.user
 
         item = await get_shop_item(message_id)
-        if item:
-            stock, role_id, db_price, _ = item
-        else:
-            stock, role_id = -1, None 
+        if not item:
+            return await interaction.response.send_message("⚠️ **Error:** This shop post is outdated. Please ask staff to repost it.", ephemeral=True)
+        
+        stock, role_id, stardust_price, usd_price = item
 
+        if stardust_price <= 0:
+            return await interaction.response.send_message("❌ This item cannot be bought with Stardust.", ephemeral=True)
         if stock == 0:
-            await interaction.response.send_message("❌ **Sold Out!** This item is out of stock.", ephemeral=True)
-            return
-
-        if role_id is None and await is_listing_locked(message_id):
-             if stock == 1:
-                await interaction.response.send_message("❌ **Busy!** Someone else is currently buying this.", ephemeral=True)
-                return
+            return await interaction.response.send_message("❌ **Sold Out!** This item is out of stock.", ephemeral=True)
+        if role_id is None and await is_listing_locked(message_id) and stock == 1:
+            return await interaction.response.send_message("❌ **Busy!** Someone else is currently buying this.", ephemeral=True)
 
         balance = await get_balance(user.id)
-        if balance < self.price:
-            await interaction.response.send_message(f"❌ You need **{self.price} Stardust** (You have {balance}).", ephemeral=True)
-            return
+        if balance < stardust_price:
+            return await interaction.response.send_message(f"❌ You need **{stardust_price} Stardust** (You have {balance}).", ephemeral=True)
 
-        await update_balance(user.id, -self.price)
+        await update_balance(user.id, -stardust_price)
         await decrement_stock(message_id)
 
         if role_id:
@@ -130,52 +125,29 @@ class StardustButton(discord.ui.Button):
             else:
                 await interaction.response.send_message("⚠️ **Error:** The role for this item no longer exists. Please contact staff.", ephemeral=True)
         else:
-            await self.create_ticket(interaction, user, message_id)
+            await self.create_ticket(interaction, user, message_id, stardust_price, "Stardust")
 
-    async def create_ticket(self, interaction, user, message_id):
-        guild = interaction.guild
-        category = discord.utils.get(guild.categories, name="Orders")
-        if not category: category = await guild.create_category("Orders")
-
-        overwrites = {
-            guild.default_role: discord.PermissionOverwrite(read_messages=False),
-            user: discord.PermissionOverwrite(read_messages=True),
-            guild.me: discord.PermissionOverwrite(read_messages=True)
-        }
-
-        ticket_channel = await guild.create_text_channel(f"order-{user.name}", category=category, overwrites=overwrites)
-        await lock_listing(message_id, ticket_channel.id, user.id, interaction.channel.id)
-
-        embed = discord.Embed(
-            title="✨ Order Created",
-            description=f"**Buyer:** {user.mention}\n**Paid:** {self.price} Stardust\n**Item:** [View Listing]({interaction.message.jump_url})",
-            color=discord.Color.green()
-        )
-        embed.set_footer(text="Staff will process your order shortly.")
-        
-        await ticket_channel.send(f"{user.mention} Thank you for your purchase!", embed=embed, view=TicketCloseView())
-        await interaction.response.send_message(f"✅ **Payment Successful!** Your ticket has been opened: {ticket_channel.mention}", ephemeral=True)
-
-
-class USDButton(discord.ui.Button):
-    def __init__(self, price):
-        super().__init__(label=f"Buy for ${price} USD", style=discord.ButtonStyle.green, emoji="💵", custom_id=f"shop:usd:{price}")
-        self.price = price
-
-    async def callback(self, interaction: discord.Interaction):
+    @discord.ui.button(label="Buy with USD", style=discord.ButtonStyle.green, emoji="💵", custom_id="shop:btn_usd")
+    async def btn_usd(self, interaction: discord.Interaction, button: discord.ui.Button):
         message_id = interaction.message.id
-
-        item = await get_shop_item(message_id)
-        if item:
-            stock = item[0]
-            if stock == 0:
-                await interaction.response.send_message("❌ **Sold Out!** This item is out of stock.", ephemeral=True)
-                return
-
-        await self.create_ticket(interaction, message_id)
-
-    async def create_ticket(self, interaction, message_id):
         user = interaction.user
+        
+        item = await get_shop_item(message_id)
+        if not item:
+            return await interaction.response.send_message("⚠️ **Error:** This shop post is outdated. Please ask staff to repost it.", ephemeral=True)
+        
+        stock, role_id, stardust_price, usd_price = item
+
+        if usd_price <= 0:
+            return await interaction.response.send_message("❌ This item cannot be bought with USD.", ephemeral=True)
+        if stock == 0:
+            return await interaction.response.send_message("❌ **Sold Out!** This item is out of stock.", ephemeral=True)
+        if role_id is None and await is_listing_locked(message_id) and stock == 1:
+            return await interaction.response.send_message("❌ **Busy!** Someone else is currently buying this.", ephemeral=True)
+
+        await self.create_ticket(interaction, user, message_id, usd_price, "USD")
+
+    async def create_ticket(self, interaction, user, message_id, price, currency):
         guild = interaction.guild
         category = discord.utils.get(guild.categories, name="Orders")
         if not category: category = await guild.create_category("Orders")
@@ -186,25 +158,24 @@ class USDButton(discord.ui.Button):
             guild.me: discord.PermissionOverwrite(read_messages=True)
         }
 
-        ticket_channel = await guild.create_text_channel(f"inquiry-{user.name}", category=category, overwrites=overwrites)
+        channel_type = "order" if currency == "Stardust" else "inquiry"
+        ticket_channel = await guild.create_text_channel(f"{channel_type}-{user.name}", category=category, overwrites=overwrites)
+        
         await lock_listing(message_id, ticket_channel.id, user.id, interaction.channel.id)
 
+        symbol = "✨" if currency == "Stardust" else "💵"
+        paid_text = f"{price} Stardust" if currency == "Stardust" else f"${price} USD"
+
         embed = discord.Embed(
-            title="💵 Order Inquiry",
-            description=f"**Buyer:** {user.mention}\n**Price:** ${self.price} USD\n**Item:** [View Listing]({interaction.message.jump_url})",
+            title=f"{symbol} Order {channel_type.capitalize()}",
+            description=f"**Buyer:** {user.mention}\n**Price:** {paid_text}\n**Item:** [View Listing]({interaction.message.jump_url})",
             color=discord.Color.green()
         )
-        embed.set_footer(text="Please wait for staff to provide payment details.")
+        footer_text = "Staff will process your order shortly." if currency == "Stardust" else "Please wait for staff to provide payment details."
+        embed.set_footer(text=footer_text)
         
         await ticket_channel.send(f"{user.mention} Ticket created!", embed=embed, view=TicketCloseView())
         await interaction.response.send_message(f"✅ Ticket opened: {ticket_channel.mention}", ephemeral=True)
-
-
-class ShopView(discord.ui.View):
-    def __init__(self, stardust_price: int, usd_price: float):
-        super().__init__(timeout=None)
-        if stardust_price > 0: self.add_item(StardustButton(stardust_price))
-        if usd_price > 0: self.add_item(USDButton(usd_price))
 
 
 class Shop(commands.Cog):
@@ -213,6 +184,7 @@ class Shop(commands.Cog):
 
     @commands.Cog.listener()
     async def on_ready(self):
+        self.bot.add_view(ShopView())
         self.bot.add_view(TicketCloseView())
         print("🛒 Shop System Loaded.")
 
@@ -222,39 +194,33 @@ class Shop(commands.Cog):
         if ctx.message.attachments:
             image_url = ctx.message.attachments[0].url
         else:
-            await ctx.send("❌ **Missing Image!** Please attach an image to your command message.")
-            return
+            return await ctx.send("❌ **Missing Image!** Please attach an image to your command message.")
 
         embed = discord.Embed(title=title, description=description, color=discord.Color.purple())
         embed.set_image(url=image_url)
         if stardust_price > 0: embed.add_field(name="✨ Stardust Price", value=f"{stardust_price} Stardust", inline=True)
         if usd_price > 0: embed.add_field(name="💵 USD Price", value=f"${usd_price} USD", inline=True)
 
-        view = ShopView(stardust_price, usd_price)
-        await channel.send(embed=embed, view=view)
+        view = ShopView()
+        msg = await channel.send(embed=embed, view=view)
+        
+        await create_shop_item(msg.id, 1, None, stardust_price, usd_price)
+        
         await ctx.send(f"✅ Listing posted in {channel.mention}!")
 
     @commands.command(name="shopStock")
     @commands.has_permissions(administrator=True)
     async def shop_stock(self, ctx, channel: discord.TextChannel, stock_input: str, stardust_price: int, usd_price: float, title: str, *, description: str):
-        """
-        Post a shop item with Stock + Role + Image support.
-        Usage: Attach Image AND/OR Mention Role -> !shopStock ...
-        """
-        
         if stock_input.lower() in ["inf", "infinity", "unlimited"]:
-            stock = -1
-            stock_text = "♾️ Unlimited"
+            stock, stock_text = -1, "♾️ Unlimited"
         else:
             try:
                 stock = int(stock_input)
                 stock_text = f"{stock}"
             except ValueError:
-                await ctx.send("❌ Stock must be a number or 'inf'.")
-                return
+                return await ctx.send("❌ Stock must be a number or 'inf'.")
 
-        role_id = None
-        image_url = None
+        role_id, image_url = None, None
 
         if ctx.message.attachments:
             image_url = ctx.message.attachments[0].url
@@ -265,27 +231,21 @@ class Shop(commands.Cog):
             description = description.replace(role.mention, "").strip()
 
         if not image_url and not role_id:
-            await ctx.send("❌ **Error:** You must attach an image OR mention a role (or both).")
-            return
+            return await ctx.send("❌ **Error:** You must attach an image OR mention a role (or both).")
 
         embed = discord.Embed(title=title, description=description, color=discord.Color.purple())
-        
-        if image_url:
-            embed.set_image(url=image_url)
+        if image_url: embed.set_image(url=image_url)
         
         embed.add_field(name="📦 Stock", value=stock_text, inline=True)
         if stardust_price > 0: embed.add_field(name="✨ Stardust Price", value=f"{stardust_price} Stardust", inline=True)
         if usd_price > 0: embed.add_field(name="💵 USD Price", value=f"${usd_price} USD", inline=True)
+        if role_id: embed.set_footer(text="✨ Instant Role Delivery")
 
-        if role_id:
-            embed.set_footer(text="✨ Instant Role Delivery")
-
-        view = ShopView(stardust_price, usd_price)
+        view = ShopView()
         msg = await channel.send(embed=embed, view=view)
 
         await create_shop_item(msg.id, stock, role_id, stardust_price, usd_price)
-        
-        await ctx.send(f"✅ Stocked Item Posted in {channel.mention} (ID: {msg.id})")
+        await ctx.send(f"✅ Stocked Item Posted in {channel.mention}")
 
 async def setup(bot):
     await bot.add_cog(Shop(bot))
