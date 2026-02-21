@@ -7,6 +7,7 @@ from database import (
     get_lock_details, create_shop_item, get_shop_item, decrement_stock
 )
 
+# --- VIEW: ADMIN DECISION ---
 class AdminCloseView(discord.ui.View):
     def __init__(self, message_id, shop_channel_id):
         super().__init__(timeout=None)
@@ -37,6 +38,7 @@ class AdminCloseView(discord.ui.View):
         await asyncio.sleep(2)
         await interaction.channel.delete()
 
+# --- VIEW: TICKET CONTROLS ---
 class TicketCloseView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=None)
@@ -70,6 +72,7 @@ class TicketCloseView(discord.ui.View):
             )
             await log_channel.send(embed=embed, file=transcript_file)
         
+        # Remove Buyer
         details = await get_lock_details(interaction.channel.id)
         if details:
             message_id, buyer_id, shop_channel_id = details
@@ -80,6 +83,7 @@ class TicketCloseView(discord.ui.View):
         else:
             message_id, shop_channel_id = 0, 0
 
+        # Admin Panel
         admin_embed = discord.Embed(
             title="🛑 Ticket Closed",
             description="The buyer has been removed.\n\n**Delete original listing?**\n(Yes = Sold Out, No = Cancelled/Restock)",
@@ -88,9 +92,19 @@ class TicketCloseView(discord.ui.View):
         view = AdminCloseView(message_id, shop_channel_id)
         await interaction.channel.send(embed=admin_embed, view=view)
 
+# --- VIEW: GLOBAL SHOP BUTTONS ---
 class ShopView(discord.ui.View):
-    def __init__(self):
+    # We default these to 1 so that when the bot restarts, it registers BOTH buttons globally.
+    # But when a user runs the command, we pass the real prices to hide the empty ones!
+    def __init__(self, stardust_price: int = 1, usd_price: float = 1.0):
         super().__init__(timeout=None)
+        
+        # Look at the buttons before posting and remove the ones that cost 0
+        for child in self.children.copy():
+            if getattr(child, "custom_id", None) == "shop:btn_stardust" and stardust_price <= 0:
+                self.remove_item(child)
+            elif getattr(child, "custom_id", None) == "shop:btn_usd" and usd_price <= 0:
+                self.remove_item(child)
 
     @discord.ui.button(label="Buy with Stardust", style=discord.ButtonStyle.blurple, emoji="✨", custom_id="shop:btn_stardust")
     async def btn_stardust(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -114,9 +128,11 @@ class ShopView(discord.ui.View):
         if balance < stardust_price:
             return await interaction.response.send_message(f"❌ You need **{stardust_price} Stardust** (You have {balance}).", ephemeral=True)
 
+        # Process Payment & Stock
         await update_balance(user.id, -stardust_price)
         await decrement_stock(message_id)
 
+        # Role Delivery vs Ticket
         if role_id:
             role = interaction.guild.get_role(role_id)
             if role:
@@ -178,12 +194,14 @@ class ShopView(discord.ui.View):
         await interaction.response.send_message(f"✅ Ticket opened: {ticket_channel.mention}", ephemeral=True)
 
 
+# --- THE SHOP COG ---
 class Shop(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
     @commands.Cog.listener()
     async def on_ready(self):
+        # Registers the default view globally so all existing buttons work
         self.bot.add_view(ShopView())
         self.bot.add_view(TicketCloseView())
         print("🛒 Shop System Loaded.")
@@ -201,11 +219,11 @@ class Shop(commands.Cog):
         if stardust_price > 0: embed.add_field(name="✨ Stardust Price", value=f"{stardust_price} Stardust", inline=True)
         if usd_price > 0: embed.add_field(name="💵 USD Price", value=f"${usd_price} USD", inline=True)
 
-        view = ShopView()
+        # Pass the prices to remove 0-cost buttons visually before posting
+        view = ShopView(stardust_price, usd_price)
         msg = await channel.send(embed=embed, view=view)
         
         await create_shop_item(msg.id, 1, None, stardust_price, usd_price)
-        
         await ctx.send(f"✅ Listing posted in {channel.mention}!")
 
     @commands.command(name="shopStock")
@@ -241,7 +259,8 @@ class Shop(commands.Cog):
         if usd_price > 0: embed.add_field(name="💵 USD Price", value=f"${usd_price} USD", inline=True)
         if role_id: embed.set_footer(text="✨ Instant Role Delivery")
 
-        view = ShopView()
+        # Pass the prices to remove 0-cost buttons visually before posting
+        view = ShopView(stardust_price, usd_price)
         msg = await channel.send(embed=embed, view=view)
 
         await create_shop_item(msg.id, stock, role_id, stardust_price, usd_price)
