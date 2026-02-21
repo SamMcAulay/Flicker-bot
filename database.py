@@ -19,16 +19,19 @@ async def init_db():
                 shop_channel_id INTEGER
             )
         """)
+
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS shop_items (
+                message_id INTEGER PRIMARY KEY,
+                stock INTEGER,
+                role_id INTEGER,
+                stardust_price INTEGER,
+                usd_price REAL
+            )
+        """)
         
-        # Migration: Attempt to add the column if it's missing (for existing dbs)
-        try:
-            await db.execute("ALTER TABLE shop_locks ADD COLUMN shop_channel_id INTEGER")
-        except:
-            pass
-            
         await db.commit()
 
-# --- ECONOMY ---
 async def get_balance(user_id: int) -> int:
     async with aiosqlite.connect(DB_NAME) as db:
         async with db.execute("SELECT balance FROM users WHERE user_id = ?", (user_id,)) as cursor:
@@ -47,7 +50,6 @@ async def update_balance(user_id: int, amount: int) -> int:
         await db.commit()
     return new_balance
 
-# --- CHANNELS ---
 async def add_allowed_channel(channel_id: int):
     async with aiosqlite.connect(DB_NAME) as db:
         await db.execute("INSERT OR IGNORE INTO allowed_channels (channel_id) VALUES (?)", (channel_id,))
@@ -64,14 +66,12 @@ async def get_allowed_channels():
             rows = await cursor.fetchall()
             return [row[0] for row in rows]
 
-# --- SHOP LOCKS ---
 async def is_listing_locked(message_id: int) -> bool:
     async with aiosqlite.connect(DB_NAME) as db:
         async with db.execute("SELECT ticket_channel_id FROM shop_locks WHERE message_id = ?", (message_id,)) as cursor:
             return await cursor.fetchone() is not None
 
 async def lock_listing(message_id: int, ticket_channel_id: int, buyer_id: int, shop_channel_id: int):
-    """Locks the listing and stores location data."""
     async with aiosqlite.connect(DB_NAME) as db:
         await db.execute("INSERT INTO shop_locks (message_id, ticket_channel_id, buyer_id, shop_channel_id) VALUES (?, ?, ?, ?)", 
                          (message_id, ticket_channel_id, buyer_id, shop_channel_id))
@@ -83,7 +83,34 @@ async def unlock_listing(ticket_channel_id: int):
         await db.commit()
 
 async def get_lock_details(ticket_channel_id: int):
-    """Retrieves info about the locked item using the ticket ID."""
     async with aiosqlite.connect(DB_NAME) as db:
         async with db.execute("SELECT message_id, buyer_id, shop_channel_id FROM shop_locks WHERE ticket_channel_id = ?", (ticket_channel_id,)) as cursor:
             return await cursor.fetchone()
+
+async def create_shop_item(message_id, stock, role_id, stardust, usd):
+    """Registers a new shop item in the DB."""
+    async with aiosqlite.connect(DB_NAME) as db:
+        await db.execute("INSERT INTO shop_items (message_id, stock, role_id, stardust_price, usd_price) VALUES (?, ?, ?, ?, ?)", 
+                         (message_id, stock, role_id, stardust, usd))
+        await db.commit()
+
+async def get_shop_item(message_id):
+    """Returns (stock, role_id, stardust, usd)."""
+    async with aiosqlite.connect(DB_NAME) as db:
+        async with db.execute("SELECT stock, role_id, stardust_price, usd_price FROM shop_items WHERE message_id = ?", (message_id,)) as cursor:
+            return await cursor.fetchone()
+
+async def decrement_stock(message_id):
+    """Lowers stock by 1. If stock is -1 (infinite), it stays -1."""
+    async with aiosqlite.connect(DB_NAME) as db:
+        async with db.execute("SELECT stock FROM shop_items WHERE message_id = ?", (message_id,)) as cursor:
+            row = await cursor.fetchone()
+            if not row: return
+            current_stock = row[0]
+        
+        if current_stock == -1:
+            return
+        
+        if current_stock > 0:
+            await db.execute("UPDATE shop_items SET stock = stock - 1 WHERE message_id = ?", (message_id,))
+            await db.commit()
