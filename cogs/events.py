@@ -40,7 +40,7 @@ class Events(commands.Cog):
 
     # --- DEV TOOL ---
     @commands.command(name="simulate", hidden=True)
-    @commands.is_owner()
+    @commands.has_permissions(administrator=True)
     async def simulate_event(self, ctx, game_type: str = None):
         """Dev Tool: Bypass cooldowns and force an event."""
         
