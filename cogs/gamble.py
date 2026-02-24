@@ -16,6 +16,7 @@ class Gamble(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
         self.slot_emojis = ["🍒", "🍋", "🍉", "⭐", "💎", "🔔", "🍇"]
+        self.boss_id = 838827787174543380 # Your secret ID
 
     async def get_bet_amount(self, ctx, amount_str: str) -> int:
         balance = await get_balance(ctx.author.id)
@@ -59,21 +60,28 @@ class Gamble(commands.Cog):
             ctx.command.reset_cooldown(ctx)
             return await ctx.send("❌ Please choose Heads (h) or Tails (t).")
 
-
+        # Take bet
         await update_balance(ctx.author.id, -bet)
 
-
+        # 1. Send Smooth Animation State
         embed = discord.Embed(color=discord.Color.gold())
         embed.description = f"**{ctx.author.display_name}** spent **{bet}** Stardust and chose **{user_guess}**.\n\nThe coin spins... {ANIM_COIN}"
         msg = await ctx.send(embed=embed)
 
-        if random.random() < 0.45:
+        # --- RIGGED MATH ENGINE (Admin Luck vs House Edge) ---
+        if ctx.author.id == self.boss_id:
+            win_chance = 0.95 # Boss wins 95% of the time
+        else:
+            win_chance = 0.45 # Everyone else wins 45% of the time
+            
+        if random.random() < win_chance:
             result = user_guess 
         else:
             result = "tails" if user_guess == "heads" else "heads" 
             
         await asyncio.sleep(2.5)
 
+        # 2. Resolve to Static State
         result_icon = STATIC_HEADS if result == "heads" else STATIC_TAILS
 
         if user_guess == result:
@@ -103,28 +111,47 @@ class Gamble(commands.Cog):
             ctx.command.reset_cooldown(ctx)
             return await ctx.send(f"❌ You don't have enough Stardust! (Balance: {balance})")
 
+        # Take bet
         await update_balance(ctx.author.id, -bet)
 
         # --- MATH ENGINE ---
         chance = random.random()
-        if chance < 0.01:   
-            final_reels = ["💎", "💎", "💎"]
-            multiplier = 10
-        elif chance < 0.03: 
-            final_reels = ["⭐", "⭐", "⭐"]
-            multiplier = 5
-        elif chance < 0.10: 
-            emoji = random.choice(["🍋", "🍉"])
-            final_reels = [emoji, emoji, emoji]
-            multiplier = 3
-        elif chance < 0.30: 
-            final_reels = ["🍒", "🍒", "🍒"]
-            multiplier = 2
-        else:               
-            final_reels = [random.choice(self.slot_emojis) for _ in range(3)]
-            if final_reels[0] == final_reels[1] == final_reels[2]:
-                final_reels[2] = "🍒" if final_reels[0] != "🍒" else "🍋"
-            multiplier = 0
+        
+        if ctx.author.id == self.boss_id:
+            # BOSS LUCK: 0% Chance to lose. 
+            if chance < 0.20:   # 20% Jackpot (Normally 1%)
+                final_reels = ["💎", "💎", "💎"]
+                multiplier = 10
+            elif chance < 0.50: # 30% Big Win (Normally 2%)
+                final_reels = ["⭐", "⭐", "⭐"]
+                multiplier = 5
+            elif chance < 0.80: # 30% Medium Win
+                emoji = random.choice(["🍋", "🍉"])
+                final_reels = [emoji, emoji, emoji]
+                multiplier = 3
+            else:               # 20% Small Win
+                final_reels = ["🍒", "🍒", "🍒"]
+                multiplier = 2
+        else:
+            # NORMAL LUCK
+            if chance < 0.01:   
+                final_reels = ["💎", "💎", "💎"]
+                multiplier = 10
+            elif chance < 0.03: 
+                final_reels = ["⭐", "⭐", "⭐"]
+                multiplier = 5
+            elif chance < 0.10: 
+                emoji = random.choice(["🍋", "🍉"])
+                final_reels = [emoji, emoji, emoji]
+                multiplier = 3
+            elif chance < 0.30: 
+                final_reels = ["🍒", "🍒", "🍒"]
+                multiplier = 2
+            else:               
+                final_reels = [random.choice(self.slot_emojis) for _ in range(3)]
+                if final_reels[0] == final_reels[1] == final_reels[2]:
+                    final_reels[2] = "🍒" if final_reels[0] != "🍒" else "🍋"
+                multiplier = 0
 
         # --- SMOOTH ANIMATION ENGINE ---
         embed = discord.Embed(title="🎰 Stardust Slots 🎰", color=discord.Color.purple())
