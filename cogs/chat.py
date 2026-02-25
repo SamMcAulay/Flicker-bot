@@ -40,7 +40,6 @@ class Chat(commands.Cog):
             "false",
             "real",
             "fake",
-            "cap",
             "source",
         }
         self.love_words = {
