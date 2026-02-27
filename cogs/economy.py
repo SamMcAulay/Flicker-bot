@@ -125,7 +125,11 @@ class Economy(commands.Cog):
 
         chips_gained = amount * 50
         await update_balance(ctx.author.id, -amount)
-        new_chips = await update_chips(ctx.author.id, chips_gained)
+        try:
+            new_chips = await update_chips(ctx.author.id, chips_gained)
+        except Exception:
+            await update_balance(ctx.author.id, amount)  # refund
+            return await ctx.send("❌ Something went wrong. Your Stardust has been refunded.")
 
         embed = discord.Embed(
             title="🎰 Chips Purchased!",
@@ -140,6 +144,8 @@ class Economy(commands.Cog):
     @commands.command(name="top", aliases=["leaderboard", "lb"])
     async def top(self, ctx):
         """Display the richest users for both currencies."""
+        if not ctx.guild:
+            return await ctx.send("❌ This command can only be used in a server.")
         top_stardust, top_chips = await get_top_users(10)
 
         def format_entries(entries):
@@ -185,7 +191,7 @@ class Economy(commands.Cog):
 
         if balance < amount:
             return await ctx.send(
-                f"❌ You don't have enough Stardust! (Balance: **{balance}**)"
+                f"❌ You don't have enough Stardust! (Balance: **{balance:,}**)"
             )
 
         await update_balance(ctx.author.id, -amount)
