@@ -50,14 +50,14 @@ async def init_db():
         try:
             await db.execute("ALTER TABLE users ADD COLUMN chips INTEGER DEFAULT 0")
             await db.commit()
-        except Exception:
+        except aiosqlite.OperationalError:
             pass  # Column already exists
 
         # Safe migration: add chips_price column to shop_items
         try:
             await db.execute("ALTER TABLE shop_items ADD COLUMN chips_price INTEGER DEFAULT 0")
             await db.commit()
-        except Exception:
+        except aiosqlite.OperationalError:
             pass  # Column already exists
 
 # --- ECONOMY ---
@@ -86,7 +86,7 @@ async def get_chips(user_id: int) -> int:
             if row:
                 return row[0]
             else:
-                await db.execute("INSERT INTO users (user_id, balance, chips) VALUES (?, 0, 0)", (user_id,))
+                await db.execute("INSERT OR IGNORE INTO users (user_id, balance, chips) VALUES (?, 0, 0)", (user_id,))
                 await db.commit()
                 return 0
 
@@ -102,11 +102,11 @@ async def get_top_users(limit: int = 10):
     """Returns (top_stardust, top_chips) as two lists of (user_id, value)."""
     async with aiosqlite.connect(DB_NAME) as db:
         async with db.execute(
-            "SELECT user_id, balance FROM users ORDER BY balance DESC LIMIT ?", (limit,)
+            "SELECT user_id, balance FROM users WHERE balance > 0 ORDER BY balance DESC LIMIT ?", (limit,)
         ) as cursor:
             top_stardust = await cursor.fetchall()
         async with db.execute(
-            "SELECT user_id, chips FROM users ORDER BY chips DESC LIMIT ?", (limit,)
+            "SELECT user_id, chips FROM users WHERE chips > 0 ORDER BY chips DESC LIMIT ?", (limit,)
         ) as cursor:
             top_chips = await cursor.fetchall()
     return top_stardust, top_chips
