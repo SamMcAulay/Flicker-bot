@@ -188,8 +188,13 @@ class ShopView(discord.ui.View):
                 return await interaction.response.send_message(
                     f"✅ **Purchase Successful!** You received the **{role.name}** role.", ephemeral=True
                 )
+            # Role missing — refund the user
+            if currency == "stardust":
+                await update_balance(user.id, price)
+            elif currency == "chips":
+                await update_chips(user.id, price)
             return await interaction.response.send_message(
-                "⚠️ Role no longer exists. Contact staff.", ephemeral=True
+                "⚠️ Role no longer exists. Your payment has been refunded. Contact staff if needed.", ephemeral=True
             )
 
         await self._create_ticket(interaction, user, message_id, price, currency)
@@ -364,6 +369,13 @@ class _ShopTriggerView(discord.ui.View):
         self.channel = channel
         self.image_url = image_url
         self.origin_msg = None
+
+    async def on_timeout(self):
+        if self.origin_msg:
+            try:
+                await self.origin_msg.delete()
+            except discord.NotFound:
+                pass
 
     @discord.ui.button(label="📋 Fill in Listing Details", style=discord.ButtonStyle.blurple)
     async def open_modal(self, interaction: discord.Interaction, button: discord.ui.Button):
