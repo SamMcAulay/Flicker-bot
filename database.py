@@ -46,6 +46,20 @@ async def init_db():
         """)
         await db.commit()
 
+        # Safe migration: add chips column if it doesn't exist yet
+        try:
+            await db.execute("ALTER TABLE users ADD COLUMN chips INTEGER DEFAULT 0")
+            await db.commit()
+        except Exception:
+            pass  # Column already exists
+
+        # Safe migration: add chips_price column to shop_items
+        try:
+            await db.execute("ALTER TABLE shop_items ADD COLUMN chips_price INTEGER DEFAULT 0")
+            await db.commit()
+        except Exception:
+            pass  # Column already exists
+
 # --- ECONOMY ---
 async def get_balance(user_id: int) -> int:
     async with aiosqlite.connect(DB_NAME) as db:
@@ -64,6 +78,38 @@ async def update_balance(user_id: int, amount: int) -> int:
         await db.execute("UPDATE users SET balance = ? WHERE user_id = ?", (new_balance, user_id))
         await db.commit()
     return new_balance
+
+async def get_chips(user_id: int) -> int:
+    async with aiosqlite.connect(DB_NAME) as db:
+        async with db.execute("SELECT chips FROM users WHERE user_id = ?", (user_id,)) as cursor:
+            row = await cursor.fetchone()
+            if row:
+                return row[0]
+            else:
+                await db.execute("INSERT INTO users (user_id, balance, chips) VALUES (?, 0, 0)", (user_id,))
+                await db.commit()
+                return 0
+
+async def update_chips(user_id: int, amount: int) -> int:
+    current = await get_chips(user_id)
+    new_chips = current + amount
+    async with aiosqlite.connect(DB_NAME) as db:
+        await db.execute("UPDATE users SET chips = ? WHERE user_id = ?", (new_chips, user_id))
+        await db.commit()
+    return new_chips
+
+async def get_top_users(limit: int = 10):
+    """Returns (top_stardust, top_chips) as two lists of (user_id, value)."""
+    async with aiosqlite.connect(DB_NAME) as db:
+        async with db.execute(
+            "SELECT user_id, balance FROM users ORDER BY balance DESC LIMIT ?", (limit,)
+        ) as cursor:
+            top_stardust = await cursor.fetchall()
+        async with db.execute(
+            "SELECT user_id, chips FROM users ORDER BY chips DESC LIMIT ?", (limit,)
+        ) as cursor:
+            top_chips = await cursor.fetchall()
+    return top_stardust, top_chips
 
 # --- ALLOWED CHANNELS ---
 async def add_allowed_channel(channel_id: int):
@@ -105,17 +151,22 @@ async def get_lock_details(ticket_channel_id: int):
             return await cursor.fetchone()
 
 # --- SHOP ITEMS ---
-async def create_shop_item(message_id, stock, role_id, stardust, usd):
+async def create_shop_item(message_id, stock, role_id, stardust, chips, usd):
     """Registers a new shop item in the DB."""
     async with aiosqlite.connect(DB_NAME) as db:
-        await db.execute("INSERT INTO shop_items (message_id, stock, role_id, stardust_price, usd_price) VALUES (?, ?, ?, ?, ?)", 
-                         (message_id, stock, role_id, stardust, usd))
+        await db.execute(
+            "INSERT INTO shop_items (message_id, stock, role_id, stardust_price, chips_price, usd_price) VALUES (?, ?, ?, ?, ?, ?)",
+            (message_id, stock, role_id, stardust, chips, usd)
+        )
         await db.commit()
 
 async def get_shop_item(message_id):
-    """Returns (stock, role_id, stardust, usd)."""
+    """Returns (stock, role_id, stardust_price, chips_price, usd_price)."""
     async with aiosqlite.connect(DB_NAME) as db:
-        async with db.execute("SELECT stock, role_id, stardust_price, usd_price FROM shop_items WHERE message_id = ?", (message_id,)) as cursor:
+        async with db.execute(
+            "SELECT stock, role_id, stardust_price, chips_price, usd_price FROM shop_items WHERE message_id = ?",
+            (message_id,)
+        ) as cursor:
             return await cursor.fetchone()
 
 async def decrement_stock(message_id):
