@@ -7,6 +7,14 @@ import time
 from discord.ext import commands
 from database import update_balance, get_allowed_channels # <--- Added Import
 
+SCRAMBLE_WORDS = [
+    "nebula", "galaxy", "cosmos", "pulsar", "quasar", "meteor", "comet",
+    "planet", "stellar", "aurora", "eclipse", "photon", "neutron", "orbit",
+    "zenith", "cosmic", "solaris", "astral", "radiant", "vortex",
+]
+
+SPACE_EMOJIS = ["🌙", "⭐", "🪐", "💫", "✨", "🌟", "☄️", "🚀", "🛸", "🌌"]
+
 class Events(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
@@ -37,6 +45,10 @@ class Events(commands.Cog):
             await self.trigger_event(message.channel, "math")
         elif chance < 0.08: # 1% Fast Type
             await self.trigger_event(message.channel, "fast_type")
+        elif chance < 0.09: # 1% Word Scramble
+            await self.trigger_event(message.channel, "word_scramble")
+        elif chance < 0.10: # 1% Emoji Sequence
+            await self.trigger_event(message.channel, "emoji_sequence")
 
     # --- DEV TOOL ---
     @commands.command(name="simulate", hidden=True)
@@ -48,7 +60,7 @@ class Events(commands.Cog):
             await ctx.send("⚠️ I'm already playing a game!")
             return
 
-        target_game = game_type if game_type else random.choice(["drop", "trivia", "math", "fast_type"])
+        target_game = game_type if game_type else random.choice(["drop", "trivia", "math", "fast_type", "word_scramble", "emoji_sequence"])
         await ctx.send(f"🪄 **Poof!** Summoning a {target_game} event... (Cooldown bypassed)")
         await self.trigger_event(ctx.channel, target_game)
 
@@ -62,6 +74,8 @@ class Events(commands.Cog):
             elif game_type == "fast_type": await self.event_fast_type(channel)
             elif game_type == "math": await self.event_math(channel)
             elif game_type == "drop": await self.event_drop(channel)
+            elif game_type == "word_scramble": await self.event_word_scramble(channel)
+            elif game_type == "emoji_sequence": await self.event_emoji_sequence(channel)
         except Exception as e:
             print(f"Event Error: {e}")
         finally:
@@ -138,6 +152,59 @@ class Events(commands.Cog):
                             await channel.send(f"🎉 **Woohoo!** That's right! The answer was **{correct}**. {msg.author.mention} caught **{reward} Stardust**!")
                         else: await channel.send(f"☁️ **Oh no!** That wasn't quite right. The answer was **{correct}**.")
                     except asyncio.TimeoutError: await channel.send(f"🌙 **The stars have faded.** The answer was **{correct}**.")
+
+    async def event_word_scramble(self, channel):
+        reward = random.randint(15, 30)
+        word = random.choice(SCRAMBLE_WORDS)
+
+        # Scramble until different from original
+        chars = list(word)
+        scrambled = word
+        while scrambled == word:
+            random.shuffle(chars)
+            scrambled = "".join(chars)
+
+        embed = discord.Embed(
+            title="🔤 Galactic Scramble!",
+            description=f"Flicker's star charts got all mixed up!\n\nUnscramble this cosmic word:\n\n**`{scrambled.upper()}`**",
+            color=discord.Color.blue(),
+        )
+        embed.set_footer(text=f"You have 20 seconds! Reward: {reward} Stardust")
+        await channel.send(embed=embed)
+
+        def check(m):
+            return m.channel == channel and not m.author.bot and m.content.lower().strip() == word
+
+        try:
+            winner = await self.bot.wait_for("message", check=check, timeout=20.0)
+            await update_balance(winner.author.id, reward)
+            await channel.send(f"🌟 **Brilliant!** {winner.author.mention} unscrambled **{word}** and earned **{reward} Stardust**!")
+        except asyncio.TimeoutError:
+            await channel.send(f"💨 **Time's up!** The word was **{word}**.")
+
+
+    async def event_emoji_sequence(self, channel):
+        reward = random.randint(10, 25)
+        sequence = random.choices(SPACE_EMOJIS, k=4)
+        sequence_str = " ".join(sequence)
+
+        embed = discord.Embed(
+            title="🌌 Star Pattern!",
+            description=f"Flicker spotted a cosmic pattern in the stars!\n\nRepeat this sequence exactly:\n\n**{sequence_str}**",
+            color=discord.Color.blurple(),
+        )
+        embed.set_footer(text=f"You have 15 seconds! Reward: {reward} Stardust")
+        await channel.send(embed=embed)
+
+        def check(m):
+            return m.channel == channel and not m.author.bot and m.content.strip() == sequence_str
+
+        try:
+            winner = await self.bot.wait_for("message", check=check, timeout=15.0)
+            await update_balance(winner.author.id, reward)
+            await channel.send(f"✨ **Perfect!** {winner.author.mention} matched the pattern and earned **{reward} Stardust**!")
+        except asyncio.TimeoutError:
+            await channel.send(f"🌠 **Gone!** The pattern faded. It was: {sequence_str}")
 
 async def setup(bot):
     await bot.add_cog(Events(bot))
