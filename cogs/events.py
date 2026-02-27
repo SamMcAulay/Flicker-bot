@@ -160,9 +160,14 @@ class Events(commands.Cog):
         # Scramble until different from original
         chars = list(word)
         scrambled = word
-        while scrambled == word:
+        for _ in range(100):
             random.shuffle(chars)
             scrambled = "".join(chars)
+            if scrambled != word:
+                break
+        # If still equal (e.g. all-identical-character word), just reverse it
+        if scrambled == word:
+            scrambled = word[::-1]
 
         embed = discord.Embed(
             title="🔤 Galactic Scramble!",
