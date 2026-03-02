@@ -1,6 +1,7 @@
 import os
+import subprocess
 import time
-from aiohttp import web, ClientSession
+from aiohttp import web
 from discord.ext import commands
 from database import get_all_stats
 
@@ -9,16 +10,11 @@ CORS_HEADERS = {
     "Access-Control-Allow-Methods": "GET",
 }
 
-GITHUB_COMMIT_URL = "https://api.github.com/repos/SamMcAulay/Flicker-bot/commits/main"
-COMMIT_CACHE_TTL = 300  # seconds
-
 class Api(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
         self.start_time = None
         self.runner = None
-        self._commit_cache = None
-        self._commit_cache_time = 0
 
     async def cog_load(self):
         app = web.Application()
@@ -40,22 +36,15 @@ class Api(commands.Cog):
         if self.start_time is None:
             self.start_time = time.time()
 
-    async def _last_commit(self) -> dict:
-        now = time.time()
-        if self._commit_cache and (now - self._commit_cache_time) < COMMIT_CACHE_TTL:
-            return self._commit_cache
+    def _last_commit(self) -> dict:
         try:
-            async with ClientSession() as session:
-                async with session.get(GITHUB_COMMIT_URL, headers={"User-Agent": "FlickerBot"}) as resp:
-                    data = await resp.json()
-                    result = {
-                        "hash": data["sha"][:7],
-                        "message": data["commit"]["message"].splitlines()[0],
-                        "date": data["commit"]["committer"]["date"][:10],
-                    }
-                    self._commit_cache = result
-                    self._commit_cache_time = now
-                    return result
+            root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            out = subprocess.check_output(
+                ["git", "log", "-1", "--format=%h||%s||%cd", "--date=short"],
+                cwd=root, stderr=subprocess.DEVNULL
+            ).decode().strip()
+            parts = out.split("||", 2)
+            return {"hash": parts[0], "message": parts[1], "date": parts[2]}
         except Exception:
             return {"hash": "unknown", "message": "unknown", "date": "unknown"}
 
@@ -64,7 +53,7 @@ class Api(commands.Cog):
         uptime = int(time.time() - self.start_time) if self.start_time else 0
         data = {
             "uptime_seconds": uptime,
-            "last_commit": await self._last_commit(),
+            "last_commit": self._last_commit(),
             "pet_count":       stats.get("pet_count", 0),
             "stardust_earned": stats.get("stardust_earned", 0),
             "games_correct":   stats.get("games_correct", 0),
