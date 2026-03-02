@@ -52,6 +52,18 @@ async def init_db():
         """)
         await db.commit()
 
+        # Safe migration: add pet streak columns
+        try:
+            await db.execute("ALTER TABLE users ADD COLUMN pet_streak INTEGER DEFAULT 0")
+            await db.commit()
+        except aiosqlite.OperationalError:
+            pass
+        try:
+            await db.execute("ALTER TABLE users ADD COLUMN last_pet_time REAL DEFAULT 0")
+            await db.commit()
+        except aiosqlite.OperationalError:
+            pass
+
         # Safe migration: add chips column if it doesn't exist yet
         try:
             await db.execute("ALTER TABLE users ADD COLUMN chips INTEGER DEFAULT 0")
@@ -116,6 +128,24 @@ async def get_top_users(limit: int = 10):
         ) as cursor:
             top_chips = await cursor.fetchall()
     return top_stardust, top_chips
+
+# --- PET STREAK ---
+async def get_pet_data(user_id: int) -> tuple:
+    """Returns (pet_streak, last_pet_time)."""
+    async with aiosqlite.connect(DB_NAME) as db:
+        async with db.execute(
+            "SELECT pet_streak, last_pet_time FROM users WHERE user_id = ?", (user_id,)
+        ) as cursor:
+            row = await cursor.fetchone()
+            return row if row else (0, 0.0)
+
+async def update_pet_data(user_id: int, streak: int, last_pet_time: float) -> None:
+    async with aiosqlite.connect(DB_NAME) as db:
+        await db.execute(
+            "UPDATE users SET pet_streak = ?, last_pet_time = ? WHERE user_id = ?",
+            (streak, last_pet_time, user_id)
+        )
+        await db.commit()
 
 # --- STATS ---
 async def increment_stat(key: str, amount: int = 1) -> None:
