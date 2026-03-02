@@ -1,7 +1,7 @@
 import discord
 import random
 from discord.ext import commands
-from database import update_balance
+from database import update_balance, increment_stat
 
 class Pet(commands.Cog):
     def __init__(self, bot):
@@ -14,6 +14,7 @@ class Pet(commands.Cog):
         reward = random.randint(1, 10)
         
         await update_balance(ctx.author.id, reward)
+        await increment_stat("pet_count")
 
         responses = [
             f"aww thank you, {ctx.author.mention}! I found this bit of Stardust for you! 🌟",

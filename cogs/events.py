@@ -5,7 +5,7 @@ import aiohttp
 import html
 import time
 from discord.ext import commands
-from database import update_balance, get_allowed_channels # <--- Added Import
+from database import update_balance, get_allowed_channels, increment_stat
 
 SCRAMBLE_WORDS = [
     "nebula", "galaxy", "cosmos", "pulsar", "quasar", "meteor", "comet",
@@ -88,8 +88,11 @@ class Events(commands.Cog):
         try:
             winner = await self.bot.wait_for('message', check=check, timeout=15.0)
             await update_balance(winner.author.id, reward)
+            await increment_stat("stardust_earned", reward)
+            await increment_stat("games_correct")
             await channel.send(f"🤲 **Gotcha!** {winner.author.mention} caught **{reward} Stardust**!")
         except asyncio.TimeoutError:
+            await increment_stat("games_wrong")
             await channel.send("💨 **Poof!** The Stardust blew away in the cosmic wind.")
 
     async def event_fast_type(self, channel):
@@ -103,8 +106,11 @@ class Events(commands.Cog):
         try:
             winner = await self.bot.wait_for('message', check=check, timeout=10.0)
             await update_balance(winner.author.id, reward)
+            await increment_stat("stardust_earned", reward)
+            await increment_stat("games_correct")
             await channel.send(f"🌟 **Caught it!** {winner.author.mention} snagged **{reward} Stardust**!")
         except asyncio.TimeoutError:
+            await increment_stat("games_wrong")
             await channel.send(f"💨 **Whoosh!** It flew away. The spell was `{target_code}`.")
 
     async def event_math(self, channel):
@@ -120,8 +126,11 @@ class Events(commands.Cog):
         try:
             winner = await self.bot.wait_for('message', check=check, timeout=12.0)
             await update_balance(winner.author.id, reward)
+            await increment_stat("stardust_earned", reward)
+            await increment_stat("games_correct")
             await channel.send(f"🤖 **Thank you!** {winner.author.mention} solved the puzzle! **{reward} Stardust** for you!")
         except asyncio.TimeoutError:
+            await increment_stat("games_wrong")
             await channel.send(f"💤 **I fell asleep counting...** The answer was **{answer}**.")
 
     async def event_trivia(self, channel):
@@ -149,9 +158,15 @@ class Events(commands.Cog):
                         msg = await self.bot.wait_for('message', check=check, timeout=30.0)
                         if msg.content.lower().strip() in [correct_let.lower(), correct.lower()]:
                             await update_balance(msg.author.id, reward)
+                            await increment_stat("stardust_earned", reward)
+                            await increment_stat("games_correct")
                             await channel.send(f"🎉 **Woohoo!** That's right! The answer was **{correct}**. {msg.author.mention} caught **{reward} Stardust**!")
-                        else: await channel.send(f"☁️ **Oh no!** That wasn't quite right. The answer was **{correct}**.")
-                    except asyncio.TimeoutError: await channel.send(f"🌙 **The stars have faded.** The answer was **{correct}**.")
+                        else:
+                            await increment_stat("games_wrong")
+                            await channel.send(f"☁️ **Oh no!** That wasn't quite right. The answer was **{correct}**.")
+                    except asyncio.TimeoutError:
+                        await increment_stat("games_wrong")
+                        await channel.send(f"🌙 **The stars have faded.** The answer was **{correct}**.")
 
     async def event_word_scramble(self, channel):
         reward = random.randint(15, 30)
@@ -183,8 +198,11 @@ class Events(commands.Cog):
         try:
             winner = await self.bot.wait_for("message", check=check, timeout=20.0)
             await update_balance(winner.author.id, reward)
+            await increment_stat("stardust_earned", reward)
+            await increment_stat("games_correct")
             await channel.send(f"🌟 **Brilliant!** {winner.author.mention} unscrambled **{word}** and earned **{reward} Stardust**!")
         except asyncio.TimeoutError:
+            await increment_stat("games_wrong")
             await channel.send(f"💨 **Time's up!** The word was **{word}**.")
 
 

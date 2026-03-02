@@ -44,6 +44,12 @@ async def init_db():
                 verified_role_id INTEGER
             )
         """)
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS stats (
+                key TEXT PRIMARY KEY,
+                value INTEGER NOT NULL DEFAULT 0
+            )
+        """)
         await db.commit()
 
         # Safe migration: add chips column if it doesn't exist yet
@@ -110,6 +116,21 @@ async def get_top_users(limit: int = 10):
         ) as cursor:
             top_chips = await cursor.fetchall()
     return top_stardust, top_chips
+
+# --- STATS ---
+async def increment_stat(key: str, amount: int = 1) -> None:
+    async with aiosqlite.connect(DB_NAME) as db:
+        await db.execute(
+            "INSERT INTO stats (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = value + excluded.value",
+            (key, amount)
+        )
+        await db.commit()
+
+async def get_all_stats() -> dict:
+    async with aiosqlite.connect(DB_NAME) as db:
+        async with db.execute("SELECT key, value FROM stats") as cursor:
+            rows = await cursor.fetchall()
+    return {row[0]: row[1] for row in rows}
 
 # --- ALLOWED CHANNELS ---
 async def add_allowed_channel(channel_id: int):

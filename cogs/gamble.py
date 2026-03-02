@@ -3,7 +3,7 @@ import random
 import asyncio
 import itertools
 from discord.ext import commands
-from database import get_chips, update_chips
+from database import get_chips, update_chips, increment_stat
 
 # ── Animated emojis (existing) ───────────────────────────────────────────────
 ANIM_COIN = "<a:coinflip:1474782979095007404>"
@@ -49,7 +49,7 @@ HILO_MULTIPLIERS = [1.5, 2.0, 3.0, 5.0, 8.0]
 
 # ── Blackjack View ────────────────────────────────────────────────────────────
 class BlackjackView(discord.ui.View):
-    def __init__(self, cog, ctx, bet: int, deck: list, player_hand: list, dealer_hand: list):
+    def __init__(self, cog, ctx, bet: int, deck: list, player_hand: list, dealer_hand: list, track_stats: bool = True):
         super().__init__(timeout=30)
         self.cog = cog
         self.ctx = ctx
@@ -57,6 +57,7 @@ class BlackjackView(discord.ui.View):
         self.deck = deck
         self.player_hand = player_hand
         self.dealer_hand = dealer_hand
+        self.track_stats = track_stats
         self.message = None
 
     def build_embed(self, reveal_dealer=False) -> discord.Embed:
@@ -95,6 +96,13 @@ class BlackjackView(discord.ui.View):
 
         if winnings:
             await update_chips(self.ctx.author.id, winnings)
+
+        if self.track_stats:
+            await increment_stat("chips_wagered", self.bet)
+            if winnings > self.bet:
+                await increment_stat("chips_earnt", winnings - self.bet)
+            elif winnings == 0:
+                await increment_stat("chips_lost", self.bet)
 
         embed = self.build_embed(reveal_dealer=True)
         embed.color = color
@@ -147,7 +155,7 @@ class BlackjackView(discord.ui.View):
 
 # ── Higher or Lower View ──────────────────────────────────────────────────────
 class HiloView(discord.ui.View):
-    def __init__(self, cog, ctx, bet: int, deck: list, current_card: str):
+    def __init__(self, cog, ctx, bet: int, deck: list, current_card: str, track_stats: bool = True):
         super().__init__(timeout=30)
         self.cog = cog
         self.ctx = ctx
@@ -155,6 +163,7 @@ class HiloView(discord.ui.View):
         self.deck = deck
         self.current_card = current_card
         self.streak = 0
+        self.track_stats = track_stats
         self.message = None
 
     def multiplier(self) -> float:
@@ -199,6 +208,9 @@ class HiloView(discord.ui.View):
         else:
             for child in self.children:
                 child.disabled = True
+            if self.track_stats:
+                await increment_stat("chips_wagered", self.bet)
+                await increment_stat("chips_lost", self.bet)
             embed = discord.Embed(
                 title="🃏 Higher or Lower",
                 description=f"❌ **Wrong!** Next card was **{next_card}** ({next_val}). You lost **{self.bet:,} Chips**.",
@@ -212,6 +224,9 @@ class HiloView(discord.ui.View):
             child.disabled = True
         payout = int(self.bet * self.multiplier())
         await update_chips(self.ctx.author.id, payout)
+        if self.track_stats:
+            await increment_stat("chips_wagered", self.bet)
+            await increment_stat("chips_earnt", payout - self.bet)
         embed = discord.Embed(
             title="🃏 Higher or Lower",
             description=f"{'🏆 Max streak!' if auto else '💰 Cashed out!'} You won **{payout:,} Chips** ({self.multiplier()}×)!",
@@ -248,6 +263,9 @@ class HiloView(discord.ui.View):
         if self.streak > 0:
             payout = int(self.bet * self.multiplier())
             await update_chips(self.ctx.author.id, payout)
+            if self.track_stats:
+                await increment_stat("chips_wagered", self.bet)
+                await increment_stat("chips_earnt", payout - self.bet)
         else:
             await update_chips(self.ctx.author.id, self.bet)
 
@@ -315,9 +333,15 @@ class Gamble(commands.Cog):
         if user_guess == result:
             winnings = bet * 2
             await update_chips(ctx.author.id, winnings)
+            if ctx.author.id != self.boss_id:
+                await increment_stat("chips_wagered", bet)
+                await increment_stat("chips_earnt", bet)
             embed.color = discord.Color.green()
             embed.description = f"**{ctx.author.display_name}** spent **{bet:,}** Chips and chose **{user_guess}**.\n\nIt landed on **{result}**! {result_icon}\n🎉 You won **{winnings:,}** Chips!"
         else:
+            if ctx.author.id != self.boss_id:
+                await increment_stat("chips_wagered", bet)
+                await increment_stat("chips_lost", bet)
             embed.color = discord.Color.red()
             embed.description = f"**{ctx.author.display_name}** spent **{bet:,}** Chips and chose **{user_guess}**.\n\nIt landed on **{result}**! {result_icon}\n❌ You lost **{bet:,}** Chips."
 
@@ -389,9 +413,15 @@ class Gamble(commands.Cog):
         if multiplier > 0:
             winnings = bet * multiplier
             await update_chips(ctx.author.id, winnings)
+            if ctx.author.id != self.boss_id:
+                await increment_stat("chips_wagered", bet)
+                await increment_stat("chips_earnt", winnings - bet)
             embed.color = discord.Color.green()
             result_text += f"🎉 **WINNER!** 🎉\nYou won **{winnings:,}** Chips! ({multiplier}×)"
         else:
+            if ctx.author.id != self.boss_id:
+                await increment_stat("chips_wagered", bet)
+                await increment_stat("chips_lost", bet)
             embed.color = discord.Color.red()
             result_text += "❌ **Lost!** ❌\nBetter luck next time."
 
@@ -423,6 +453,9 @@ class Gamble(commands.Cog):
         if hand_value(player_hand) == 21:
             payout = int(bet * 2.5)
             await update_chips(ctx.author.id, payout)
+            if ctx.author.id != self.boss_id:
+                await increment_stat("chips_wagered", bet)
+                await increment_stat("chips_earnt", payout - bet)
             embed = discord.Embed(
                 title="🃏 Blackjack — Natural 21!",
                 description=f"**{fmt_hand(player_hand)}**\n\n🎉 **Blackjack! You win {payout:,} Chips!** (2.5×)",
@@ -430,7 +463,7 @@ class Gamble(commands.Cog):
             )
             return await ctx.send(embed=embed)
 
-        view = BlackjackView(self, ctx, bet, deck, player_hand, dealer_hand)
+        view = BlackjackView(self, ctx, bet, deck, player_hand, dealer_hand, track_stats=(ctx.author.id != self.boss_id))
         msg = await ctx.send(embed=view.build_embed(), view=view)
         view.message = msg
 
@@ -455,7 +488,7 @@ class Gamble(commands.Cog):
         random.shuffle(deck)
         current_card = deck.pop()
 
-        view = HiloView(self, ctx, bet, deck, current_card)
+        view = HiloView(self, ctx, bet, deck, current_card, track_stats=(ctx.author.id != self.boss_id))
         msg = await ctx.send(embed=view.build_embed(), view=view)
         view.message = msg
 
@@ -502,6 +535,9 @@ class Gamble(commands.Cog):
         if player_total > flicker_total:
             winnings = bet * 2
             await update_chips(ctx.author.id, winnings)
+            if ctx.author.id != self.boss_id:
+                await increment_stat("chips_wagered", bet)
+                await increment_stat("chips_earnt", bet)
             embed.color = discord.Color.green()
             embed.description += f"\n\n🎉 **You win {winnings:,} Chips!**"
         elif player_total == flicker_total:
@@ -509,6 +545,9 @@ class Gamble(commands.Cog):
             embed.color = discord.Color.greyple()
             embed.description += "\n\n🤝 **Tie! Bet refunded.**"
         else:
+            if ctx.author.id != self.boss_id:
+                await increment_stat("chips_wagered", bet)
+                await increment_stat("chips_lost", bet)
             embed.color = discord.Color.red()
             embed.description += "\n\n❌ **Flicker wins. Better luck next time.**"
 
@@ -569,9 +608,15 @@ class Gamble(commands.Cog):
         if won:
             winnings = int(bet * multiplier)
             await update_chips(ctx.author.id, winnings)
+            if ctx.author.id != self.boss_id:
+                await increment_stat("chips_wagered", bet)
+                await increment_stat("chips_earnt", winnings - bet)
             embed.color = discord.Color.green()
             embed.description = f"{result_line}\n\n🎉 **You win {winnings:,} Chips!** ({multiplier}×)"
         else:
+            if ctx.author.id != self.boss_id:
+                await increment_stat("chips_wagered", bet)
+                await increment_stat("chips_lost", bet)
             embed.color = discord.Color.red()
             embed.description = f"{result_line}\n\n❌ **You lost {bet:,} Chips.**"
 
