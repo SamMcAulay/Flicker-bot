@@ -1,5 +1,4 @@
 import os
-import subprocess
 import time
 from aiohttp import web
 from discord.ext import commands
@@ -9,6 +8,15 @@ CORS_HEADERS = {
     "Access-Control-Allow-Origin": "*",
     "Access-Control-Allow-Methods": "GET",
 }
+
+def _last_commit() -> dict:
+    sha = os.getenv("RAILWAY_GIT_COMMIT_SHA", "")
+    msg = os.getenv("RAILWAY_GIT_COMMIT_MESSAGE", "unknown")
+    return {
+        "hash": sha[:7] if sha else "unknown",
+        "message": msg.splitlines()[0] if msg else "unknown",
+        "date": os.getenv("RAILWAY_GIT_AUTHOR_TIME", "unknown"),
+    }
 
 class Api(commands.Cog):
     def __init__(self, bot):
@@ -36,24 +44,12 @@ class Api(commands.Cog):
         if self.start_time is None:
             self.start_time = time.time()
 
-    def _last_commit(self) -> dict:
-        try:
-            root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-            out = subprocess.check_output(
-                ["git", "log", "-1", "--format=%h||%s||%cd", "--date=short"],
-                cwd=root, stderr=subprocess.DEVNULL
-            ).decode().strip()
-            parts = out.split("||", 2)
-            return {"hash": parts[0], "message": parts[1], "date": parts[2]}
-        except Exception:
-            return {"hash": "unknown", "message": "unknown", "date": "unknown"}
-
     async def handle_stats(self, request):
         stats = await get_all_stats()
         uptime = int(time.time() - self.start_time) if self.start_time else 0
         data = {
             "uptime_seconds": uptime,
-            "last_commit": self._last_commit(),
+            "last_commit": _last_commit(),
             "pet_count":       stats.get("pet_count", 0),
             "stardust_earned": stats.get("stardust_earned", 0),
             "games_correct":   stats.get("games_correct", 0),
