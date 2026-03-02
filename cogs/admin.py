@@ -1,6 +1,8 @@
 import discord
 from discord.ext import commands
-from database import add_allowed_channel, remove_allowed_channel, get_allowed_channels, reset_chip_stats, get_all_stats
+import aiosqlite
+import database
+from database import add_allowed_channel, remove_allowed_channel, get_allowed_channels, reset_chip_stats, get_all_stats, record_user_game, get_user_game_stats
 
 class Admin(commands.Cog):
     def __init__(self, bot):
@@ -73,6 +75,56 @@ class Admin(commands.Cog):
         embed.add_field(name="chips_lost", value=f"~~{lost:,}~~ → 0", inline=False)
         embed.set_footer(text="User Stardust and Chips balances were not affected.")
         await ctx.send(embed=embed)
+
+
+    @commands.command(name="dbcheck")
+    async def dbcheck(self, ctx):
+        """Debug: test whether user_game_stats table works end-to-end."""
+        lines = []
+        lines.append(f"DB path: `{database.DB_NAME}`")
+
+        # Step 1: check if table exists
+        try:
+            async with aiosqlite.connect(database.DB_NAME) as db:
+                async with db.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='user_game_stats'") as cur:
+                    row = await cur.fetchone()
+            lines.append(f"Table exists: `{bool(row)}`")
+        except Exception as e:
+            lines.append(f"Table check error: `{e}`")
+
+        # Step 2: count rows in table
+        try:
+            async with aiosqlite.connect(database.DB_NAME) as db:
+                async with db.execute("SELECT COUNT(*) FROM user_game_stats") as cur:
+                    row = await cur.fetchone()
+            lines.append(f"Total rows in table: `{row[0]}`")
+        except Exception as e:
+            lines.append(f"Row count error: `{e}`")
+
+        # Step 3: write a test row for yourself
+        try:
+            await record_user_game(ctx.author.id, "_test_", 1)
+            lines.append("Write test row: ✅ succeeded")
+        except Exception as e:
+            lines.append(f"Write test row error: `{e}`")
+
+        # Step 4: read it back
+        try:
+            stats = await get_user_game_stats(ctx.author.id)
+            lines.append(f"Read back stats keys: `{list(stats.keys())}`")
+        except Exception as e:
+            lines.append(f"Read back error: `{e}`")
+
+        # Step 5: clean up the test row
+        try:
+            async with aiosqlite.connect(database.DB_NAME) as db:
+                await db.execute("DELETE FROM user_game_stats WHERE user_id = ? AND game = '_test_'", (ctx.author.id,))
+                await db.commit()
+            lines.append("Cleanup: ✅")
+        except Exception as e:
+            lines.append(f"Cleanup error: `{e}`")
+
+        await ctx.send("\n".join(lines))
 
 
 async def setup(bot):
