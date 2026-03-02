@@ -99,7 +99,8 @@ class Events(commands.Cog):
         reward = random.randint(10, 20)
         chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
         target_code = f"{''.join(random.choices(chars, k=3))}-{''.join(random.choices(chars, k=3))}"
-        embed = discord.Embed(title="💫 Catch the Falling Star!", description=f"Quick! Type this magic spell before it disappears:\n\n`{target_code}`", color=discord.Color.gold())
+        display_code = "\u200b".join(target_code)  # zero-width spaces prevent copy-paste on mobile
+        embed = discord.Embed(title="💫 Catch the Falling Star!", description=f"Quick! Type this magic spell before it disappears:\n\n**{display_code}**", color=discord.Color.gold())
         embed.set_footer(text=f"You have 10 seconds! Reward: {reward} Stardust")
         await channel.send(embed=embed)
         def check(m): return m.channel == channel and not m.author.bot and m.content == target_code
