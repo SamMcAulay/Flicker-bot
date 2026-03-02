@@ -103,6 +103,23 @@ class Economy(commands.Cog):
             f"💰 Added **{amount}** Stardust to {member.mention}. New balance: **{new_bal}**"
         )
 
+    @commands.group(name="chips", invoke_without_command=True)
+    async def chips_cmd(self, ctx):
+        """Base command for managing chips."""
+        await ctx.send("Use `!chips remove @user <amount>`")
+
+    @chips_cmd.command(name="remove")
+    @commands.has_permissions(administrator=True)
+    async def chips_remove(self, ctx, member: discord.Member, amount: int):
+        """Admin only: Remove chips from a user."""
+        if amount <= 0:
+            return await ctx.send("❌ Please provide a positive number to remove.")
+
+        new_bal = await update_chips(member.id, -amount)
+        await ctx.send(
+            f"📉 Removed **{amount:,}** Chips from {member.mention}. New balance: **{new_bal:,}**"
+        )
+
     @commands.command(name="buychips", aliases=["bc"])
     async def buy_chips(self, ctx, amount_str: str):
         """Convert Stardust into Chips. Rate: 1 Stardust = 50 Chips."""
@@ -121,7 +138,9 @@ class Economy(commands.Cog):
         if amount <= 0:
             return await ctx.send("❌ You must convert a positive amount of Stardust!")
         if balance < amount:
-            return await ctx.send(f"❌ You don't have enough Stardust! (Balance: **{balance:,}**)")
+            return await ctx.send(
+                f"❌ You don't have enough Stardust! (Balance: **{balance:,}**)"
+            )
 
         chips_gained = amount * 50
         await update_balance(ctx.author.id, -amount)
@@ -129,7 +148,9 @@ class Economy(commands.Cog):
             new_chips = await update_chips(ctx.author.id, chips_gained)
         except Exception:
             await update_balance(ctx.author.id, amount)  # refund
-            return await ctx.send("❌ Something went wrong. Your Stardust has been refunded.")
+            return await ctx.send(
+                "❌ Something went wrong. Your Stardust has been refunded."
+            )
 
         embed = discord.Embed(
             title="🎰 Chips Purchased!",
@@ -152,16 +173,24 @@ class Economy(commands.Cog):
             lines = []
             medals = ["🥇", "🥈", "🥉"]
             for i, (user_id, value) in enumerate(entries):
-                prefix = medals[i] if i < 3 else f"**{i+1}.**"
+                prefix = medals[i] if i < 3 else f"**{i + 1}.**"
                 user = ctx.guild.get_member(user_id)
                 name = user.display_name if user else f"User {user_id}"
                 lines.append(f"{prefix} {name} — {value:,}")
             return "\n".join(lines) if lines else "*No data yet*"
 
-        embed = discord.Embed(title="🏆 Flicker Leaderboard", color=discord.Color.purple())
-        embed.add_field(name="✨ Top Stardust", value=format_entries(top_stardust), inline=True)
-        embed.add_field(name="🎰 Top Chips", value=format_entries(top_chips), inline=True)
-        embed.set_footer(text="Earn Stardust through events • Convert to Chips for gambling")
+        embed = discord.Embed(
+            title="🏆 Flicker Leaderboard", color=discord.Color.purple()
+        )
+        embed.add_field(
+            name="✨ Top Stardust", value=format_entries(top_stardust), inline=True
+        )
+        embed.add_field(
+            name="🎰 Top Chips", value=format_entries(top_chips), inline=True
+        )
+        embed.set_footer(
+            text="Earn Stardust through events • Convert to Chips for gambling"
+        )
         await ctx.send(embed=embed)
 
     @commands.command(name="pay", aliases=["transfer", "give"])
