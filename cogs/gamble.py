@@ -862,8 +862,8 @@ class Gamble(commands.Cog):
         await msg.edit(embed=embed)
 
     # ── My Stats ──────────────────────────────────────────────────────────────
-    @commands.command(name="me")
-    async def me(self, ctx, user: discord.Member = None):
+    @commands.command(name="stats")
+    async def stats(self, ctx, user: discord.Member = None):
         """Show your personal gambling stats (or another user's with @mention)."""
         target = user or ctx.author
         stats = await get_user_game_stats(target.id)

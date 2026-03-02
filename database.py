@@ -187,16 +187,21 @@ async def reset_chip_stats() -> None:
 # --- PER-USER GAME STATS ---
 async def record_user_game(user_id: int, game: str, wagered: int, earnt: int = 0, lost: int = 0, biggest_win: int = 0) -> None:
     async with aiosqlite.connect(DB_NAME) as db:
-        await db.execute("""
-            INSERT INTO user_game_stats (user_id, game, played, wagered, earnt, lost, biggest_win)
-            VALUES (?, ?, 1, ?, ?, ?, ?)
-            ON CONFLICT(user_id, game) DO UPDATE SET
-                played      = played + 1,
-                wagered     = wagered + excluded.wagered,
-                earnt       = earnt + excluded.earnt,
-                lost        = lost + excluded.lost,
-                biggest_win = MAX(biggest_win, excluded.biggest_win)
-        """, (user_id, game, wagered, earnt, lost, biggest_win))
+        async with db.execute(
+            "SELECT biggest_win FROM user_game_stats WHERE user_id = ? AND game = ?",
+            (user_id, game)
+        ) as cursor:
+            row = await cursor.fetchone()
+        if row is None:
+            await db.execute(
+                "INSERT INTO user_game_stats (user_id, game, played, wagered, earnt, lost, biggest_win) VALUES (?, ?, 1, ?, ?, ?, ?)",
+                (user_id, game, wagered, earnt, lost, biggest_win)
+            )
+        else:
+            await db.execute(
+                "UPDATE user_game_stats SET played = played + 1, wagered = wagered + ?, earnt = earnt + ?, lost = lost + ?, biggest_win = MAX(biggest_win, ?) WHERE user_id = ? AND game = ?",
+                (wagered, earnt, lost, biggest_win, user_id, game)
+            )
         await db.commit()
 
 async def get_user_game_stats(user_id: int) -> dict:
