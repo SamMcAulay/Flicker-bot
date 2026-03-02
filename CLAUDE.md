@@ -20,9 +20,9 @@ There is no test suite or linter configured. Testing is done manually on a live 
 
 Flicker-bot uses two distinct currencies with a deliberate one-way flow:
 
-**Stardust** is the primary currency. It is earned exclusively by participating in random in-chat events (drop, trivia, math, fast_type, word_scramble, emoji_sequence). It can be transferred between users via `!pay` and spent in the shop. It cannot be earned through gambling.
+**Stardust** is the primary currency. It is earned exclusively by participating in random in-chat events (drop, trivia, math, fast_type, word_scramble). It can be transferred between users via `!pay` and spent in the shop. It cannot be earned through gambling.
 
-**Chips** are the gambling currency. They are purchased from Stardust at a fixed rate of **1 Stardust = 50 Chips** using the `!buychips` command. The conversion is one-way — Chips cannot be converted back into Stardust. All gambling commands (`!coinflip`, `!slots`, `!blackjack`, `!hilo`, `!dice`, `!roulette`) exclusively use Chips as stakes. Chips can also be spent in the shop if the admin sets a chips price on a listing.
+**Chips** are the gambling currency. They are purchased from Stardust at a fixed rate of **1 Stardust = 50 Chips** using the `!buychips` command. The conversion is one-way — Chips cannot be converted back into Stardust. All gambling commands (`!coinflip`, `!slots`, `!blackjack`, `!hilo`, `!roulette`, `!warp`) exclusively use Chips as stakes. Chips can also be spent in the shop if the admin sets a chips price on a listing.
 
 This design separates the economy (Stardust earned through participation) from gambling risk (Chips bought voluntarily), preventing gambling losses from directly depleting event-earned wealth.
 
@@ -50,9 +50,9 @@ Key functions:
 
 | Cog | Responsibility |
 |-----|---------------|
-| `economy.py` | `!balance`/`!bal`/`!b` (shows both Stardust and Chips); `!add` (admin, awards Stardust); `!buychips`/`!bc` (converts Stardust to Chips at 1:50); `!top`/`!leaderboard`/`!lb` (dual leaderboard); `!pay`/`!transfer`/`!give` (Stardust transfer with confirmation View) |
-| `events.py` | `on_message` hook; 5–10% chance to fire a random event (drop, trivia, math, fast_type, word_scramble, emoji_sequence) in allowed channels; 180s cooldown; all events reward Stardust |
-| `gamble.py` | All games use Chips as stakes. `!coinflip`/`!cf` and `!slots`/`!s` (existing); `!blackjack`/`!bj` (Hit/Stand/Double Down with interactive View); `!hilo`/`!hl` (Higher or Lower with escalating multipliers up to 8×); `!dice`/`!roll` (2d6 duel vs. Flicker, 2× payout); `!roulette`/`!rt` (red/black/odd/even/straight-up, 1.9× or 35×). Boss user ID `838827787174543380` gets rigged odds across all games. |
+| `economy.py` | `!balance`/`!bal`/`!b`/`!wallet` (shows both Stardust and Chips); `!add` (admin, awards Stardust); `!buychips`/`!bc` (converts Stardust to Chips at 1:50); `!top`/`!leaderboard`/`!lb` (dual leaderboard); `!pay`/`!transfer`/`!give` (Stardust transfer with confirmation View) |
+| `events.py` | `on_message` hook; 5–10% chance to fire a random event (drop, trivia, math, fast_type, word_scramble) in allowed channels; 180s cooldown; all events reward Stardust |
+| `gamble.py` | All games use Chips as stakes. `!coinflip`/`!cf` and `!slots`/`!s` (existing); `!blackjack`/`!bj` (Hit/Stand/Double Down with interactive View); `!hilo`/`!hl` (Higher or Lower with escalating multipliers); `!roulette`/`!rt` (red/black/odd/even/straight-up, 1.9× or 35×); `!warp`/`!rr`/`!russianroulette` (Hyperwarp Drive — pull trigger for exponential multipliers, 53.3% survival rate). Boss user ID `838827787174543380` gets rigged odds across all games. |
 | `shop.py` | Admin posts listings via `!shop #channel` (opens a Discord Modal for title, description, stock, prices, and optional role ID); listings have three optional buy buttons: Stardust, Chips, USD; role-based items auto-deliver on Stardust/Chips purchase; manual items open a private ticket channel under an "Orders" category |
 | `chat.py` | Responds conversationally when "flicker" is mentioned; keyword buckets drive probabilistic reply selection |
 | `verify.py` | Verification embed with a trap-door quiz for users who admit they haven't read the rules |
@@ -66,7 +66,7 @@ Interactive components (buttons, modals, selects) are implemented as `discord.ui
 
 The shop uses a two-step modal flow: `!shop #channel` sends a temporary `_ShopTriggerView` with a single button; clicking it opens a `ShopPostModal` (a `discord.ui.Modal`) where the admin fills in all listing details in one form. On submit the modal posts the listing embed and attaches the persistent `ShopView` (three buy buttons). This avoids the old multi-command `!shopPost` / `!shopStock` workflow.
 
-The `ShopView` and `TicketCloseView` survive bot restarts because they are registered as persistent views in `on_ready()` via `bot.add_view()`. Gambling views (`BlackjackView`, `HiloView`) are ephemeral — they time out and refund the bet if the player does not respond within 30 seconds.
+The `ShopView` and `TicketCloseView` survive bot restarts because they are registered as persistent views in `on_ready()` via `bot.add_view()`. Gambling views (`BlackjackView`, `HiloView`, `WarpView`) are ephemeral — they time out after 30 seconds and auto-resolve (refund or pay out earned multiplier) if the player does not respond.
 
 ### Adding a New Cog
 

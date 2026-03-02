@@ -162,6 +162,16 @@ async def get_all_stats() -> dict:
             rows = await cursor.fetchall()
     return {row[0]: row[1] for row in rows}
 
+async def reset_chip_stats() -> None:
+    """Resets chips_wagered, chips_earnt, and chips_lost to 0. Does not touch user balances."""
+    async with aiosqlite.connect(DB_NAME) as db:
+        for key in ("chips_wagered", "chips_earnt", "chips_lost"):
+            await db.execute(
+                "INSERT INTO stats (key, value) VALUES (?, 0) ON CONFLICT(key) DO UPDATE SET value = 0",
+                (key,)
+            )
+        await db.commit()
+
 # --- ALLOWED CHANNELS ---
 async def add_allowed_channel(channel_id: int):
     async with aiosqlite.connect(DB_NAME) as db:

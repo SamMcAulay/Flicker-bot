@@ -1,6 +1,6 @@
 import discord
 from discord.ext import commands
-from database import add_allowed_channel, remove_allowed_channel, get_allowed_channels
+from database import add_allowed_channel, remove_allowed_channel, get_allowed_channels, reset_chip_stats, get_all_stats
 
 class Admin(commands.Cog):
     def __init__(self, bot):
@@ -53,6 +53,27 @@ class Admin(commands.Cog):
             color=discord.Color.blue()
         )
         await ctx.send(embed=embed)
+
+    @commands.command(name="resetgamblestats")
+    async def reset_gamble_stats(self, ctx):
+        """Resets chips_wagered, chips_earnt, and chips_lost to 0. Does not touch user balances."""
+        stats_before = await get_all_stats()
+        wagered = stats_before.get("chips_wagered", 0)
+        earnt = stats_before.get("chips_earnt", 0)
+        lost = stats_before.get("chips_lost", 0)
+
+        await reset_chip_stats()
+
+        embed = discord.Embed(
+            title="🗑️ Gambling Stats Reset",
+            color=discord.Color.orange(),
+        )
+        embed.add_field(name="chips_wagered", value=f"~~{wagered:,}~~ → 0", inline=False)
+        embed.add_field(name="chips_earnt", value=f"~~{earnt:,}~~ → 0", inline=False)
+        embed.add_field(name="chips_lost", value=f"~~{lost:,}~~ → 0", inline=False)
+        embed.set_footer(text="User Stardust and Chips balances were not affected.")
+        await ctx.send(embed=embed)
+
 
 async def setup(bot):
     await bot.add_cog(Admin(bot))

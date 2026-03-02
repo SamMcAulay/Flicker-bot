@@ -16,6 +16,11 @@ STATIC_TAILS = "🪙"
 SUITS = ["✨", "🌙", "⭐", "💫"]
 RANKS = ["A", "2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K"]
 
+# ── Roulette helpers ──────────────────────────────────────────────────────────
+ROULETTE_RED = {1, 3, 5, 7, 9, 12, 14, 16, 18, 19, 21, 23, 25, 27, 30, 32, 34, 36}
+ROULETTE_BLACK = {2, 4, 6, 8, 10, 11, 13, 15, 17, 20, 22, 24, 26, 28, 29, 31, 33, 35}
+ROULETTE_SPIN_FRAMES = ["🌀", "💫", "⭐", "🌟", "✨"]
+
 
 def new_deck():
     return [f"{r}{s}" for r, s in itertools.product(RANKS, SUITS)]
@@ -198,6 +203,8 @@ class BlackjackView(discord.ui.View):
             except Exception:
                 pass
         await update_chips(self.ctx.author.id, self.bet)
+        if self.track_stats:
+            await increment_stat("chips_wagered", self.bet)
 
 
 # ── Higher or Lower View ──────────────────────────────────────────────────────
@@ -353,8 +360,13 @@ class HiloView(discord.ui.View):
         if self.streak > 0:
             payout = int(self.bet * self.multiplier())
             await update_chips(self.ctx.author.id, payout)
+            if self.track_stats:
+                await increment_stat("chips_wagered", self.bet)
+                await increment_stat("chips_earnt", payout - self.bet)
         else:
             await update_chips(self.ctx.author.id, self.bet)
+            if self.track_stats:
+                await increment_stat("chips_wagered", self.bet)
 
 
 # ── Russian Roulette View ─────────────────────────────────────────────────────
@@ -463,8 +475,13 @@ class WarpView(discord.ui.View):
         if self.jumps > 0:
             payout = int(self.bet * self.multiplier)
             await update_chips(self.ctx.author.id, payout)
+            if self.track_stats:
+                await increment_stat("chips_wagered", self.bet)
+                await increment_stat("chips_earnt", payout - self.bet)
         else:
             await update_chips(self.ctx.author.id, self.bet)
+            if self.track_stats:
+                await increment_stat("chips_wagered", self.bet)
 
 
 # ── Gamble Cog ────────────────────────────────────────────────────────────────
@@ -492,7 +509,7 @@ class Gamble(commands.Cog):
             return -1
 
     # ── Russian Roulette ──────────────────────────────────────────────────────
-    @commands.command(name="warp", aliases=["hyperwarp", "hyperjump", "wj"])
+    @commands.command(name="warp", aliases=["hyperwarp", "hyperjump", "wj", "rr", "russianroulette"])
     @commands.cooldown(1, 15, commands.BucketType.user)
     async def warp(self, ctx, amount: str):
         """Push the Hyperwarp Drive for exponential rewards!"""
@@ -564,7 +581,7 @@ class Gamble(commands.Cog):
             await update_chips(ctx.author.id, winnings)
             if ctx.author.id != self.boss_id:
                 await increment_stat("chips_wagered", bet)
-                await increment_stat("chips_earnt", bet)
+                await increment_stat("chips_earnt", winnings - bet)
             embed.color = discord.Color.green()
             embed.description = f"**{ctx.author.display_name}** spent **{bet:,}** Chips and chose **{user_guess}**.\n\nIt landed on **{result}**! {result_icon}\n🎉 You won **{winnings:,}** Chips!"
         else:
@@ -747,6 +764,83 @@ class Gamble(commands.Cog):
         )
         msg = await ctx.send(embed=view.build_embed(), view=view)
         view.message = msg
+
+    # ── Roulette ──────────────────────────────────────────────────────────────
+    @commands.command(name="roulette", aliases=["rt"])
+    @commands.cooldown(1, 15, commands.BucketType.user)
+    async def roulette(self, ctx, amount: str, *, bet_input: str):
+        """Bet on the Starwheel! Usage: !roulette <chips> <red|black|odd|even|0-36>"""
+        bet = await self.get_bet_amount(ctx, amount)
+        if bet == -1:
+            return ctx.command.reset_cooldown(ctx)
+
+        chips = await get_chips(ctx.author.id)
+        if chips < bet:
+            ctx.command.reset_cooldown(ctx)
+            return await ctx.send(
+                f"❌ You don't have enough Chips! (Balance: {chips:,})"
+            )
+
+        bet_type = bet_input.strip().lower()
+        valid_types = {"red", "black", "odd", "even"} | {str(n) for n in range(37)}
+        if bet_type not in valid_types:
+            ctx.command.reset_cooldown(ctx)
+            return await ctx.send(
+                "❌ Bet must be `red`, `black`, `odd`, `even`, or a number 0–36."
+            )
+
+        await update_chips(ctx.author.id, -bet)
+
+        result = random.randint(0, 36)
+        if ctx.author.id == self.boss_id and bet_type.isdigit():
+            target = int(bet_type)
+            if random.random() < 0.40:
+                result = max(0, min(36, target + random.randint(-2, 2)))
+
+        result_color = (
+            "🟢" if result == 0 else ("🔴" if result in ROULETTE_RED else "⚫")
+        )
+
+        embed = discord.Embed(title="🎡 Starwheel Roulette", color=discord.Color.purple())
+        embed.description = f"Spinning the cosmic wheel... {ROULETTE_SPIN_FRAMES[0]}"
+        msg = await ctx.send(embed=embed)
+        for frame in ROULETTE_SPIN_FRAMES[1:]:
+            await asyncio.sleep(0.6)
+            embed.description = f"Spinning the cosmic wheel... {frame}"
+            await msg.edit(embed=embed)
+        await asyncio.sleep(0.8)
+
+        if bet_type == "red":
+            won, multiplier = result in ROULETTE_RED, 1.9
+        elif bet_type == "black":
+            won, multiplier = result in ROULETTE_BLACK, 1.9
+        elif bet_type == "odd":
+            won, multiplier = result != 0 and result % 2 == 1, 1.9
+        elif bet_type == "even":
+            won, multiplier = result != 0 and result % 2 == 0, 1.9
+        else:
+            won, multiplier = result == int(bet_type), 35.0
+
+        result_line = f"The wheel landed on **{result_color} {result}**!"
+        if won:
+            winnings = int(bet * multiplier)
+            await update_chips(ctx.author.id, winnings)
+            if ctx.author.id != self.boss_id:
+                await increment_stat("chips_wagered", bet)
+                await increment_stat("chips_earnt", winnings - bet)
+            embed.color = discord.Color.green()
+            embed.description = (
+                f"{result_line}\n\n🎉 **You win {winnings:,} Chips!** ({multiplier}×)"
+            )
+        else:
+            if ctx.author.id != self.boss_id:
+                await increment_stat("chips_wagered", bet)
+                await increment_stat("chips_lost", bet)
+            embed.color = discord.Color.red()
+            embed.description = f"{result_line}\n\n❌ **You lost {bet:,} Chips.**"
+
+        embed.set_footer(text=f"Bet: {bet_input} · {bet:,} Chips wagered")
+        await msg.edit(embed=embed)
 
     # ── Error handler ─────────────────────────────────────────────────────────
     async def cog_command_error(self, ctx, error):
