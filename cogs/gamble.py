@@ -358,44 +358,43 @@ class HiloView(discord.ui.View):
 
 
 # ── Russian Roulette View ─────────────────────────────────────────────────────
-class RRView(discord.ui.View):
+class WarpView(discord.ui.View):
     def __init__(self, cog, ctx, bet: int, track_stats: bool = True):
         super().__init__(timeout=30)
         self.cog = cog
         self.ctx = ctx
         self.bet = bet
         self.track_stats = track_stats
-        self.survivals = 0
+        self.jumps = 0
         self.multiplier = 1.0
         self.message = None
 
     def build_embed(self) -> discord.Embed:
         potential = int(self.bet * self.multiplier)
-        embed = discord.Embed(
-            title="🔫 Russian Roulette", color=discord.Color.dark_red()
-        )
-        embed.add_field(
-            name="Trigger Pulls", value=f"{self.survivals} times", inline=True
-        )
+        embed = discord.Embed(title="🚀 Hyperwarp Drive", color=discord.Color.blue())
+        embed.add_field(name="Warp Jumps", value=f"{self.jumps} times", inline=True)
         embed.add_field(
             name="Current Cash Out",
             value=f"{potential:,} Chips ({self.multiplier:.2f}×)",
             inline=True,
         )
-        embed.set_footer(text=f"Bet: {self.bet:,} Chips — Pull again or cash out?")
+        embed.set_footer(
+            text=f"Bet: {self.bet:,} Chips — Jump deeper or return to base?"
+        )
         return embed
 
-    @discord.ui.button(label="Pull Trigger 🔫", style=discord.ButtonStyle.danger)
+    @discord.ui.button(label="Initiate Warp 🚀", style=discord.ButtonStyle.danger)
     async def pull(self, interaction: discord.Interaction, button: discord.ui.Button):
         if interaction.user.id != self.ctx.author.id:
             return await interaction.response.send_message(
-                "Not your game!", ephemeral=True
+                "Not your ship!", ephemeral=True
             )
 
         # 53.3% survival rate achieves exactly 80% Expected Value on a 1.5x multiplier jump
         survival_chance = 0.95 if interaction.user.id == self.cog.boss_id else 0.533
 
         if random.random() > survival_chance:
+            # ENGINE OVERLOAD!
             for child in self.children:
                 child.disabled = True
             if self.track_stats:
@@ -403,34 +402,37 @@ class RRView(discord.ui.View):
                 await increment_stat("chips_lost", self.bet)
 
             embed = discord.Embed(
-                title="🔫 Russian Roulette",
-                description=f"💥 **BANG!** You pushed your luck too far. You lost **{self.bet:,} Chips**.",
+                title="🚀 Hyperwarp Drive",
+                description=f"💥 **OVERLOAD!** You pushed the engines too far. You lost **{self.bet:,} Chips**.",
                 color=discord.Color.red(),
             )
             await interaction.response.edit_message(embed=embed, view=self)
             self.stop()
         else:
-            self.survivals += 1
-            if self.survivals == 1:
+            # SUCCESSFUL JUMP
+            self.jumps += 1
+            if self.jumps == 1:
                 self.multiplier = 1.5
             else:
                 self.multiplier *= 1.5  # Exponential multiplier
 
             embed = self.build_embed()
-            embed.description = f"😅 *Click...* You survived round {self.survivals}!"
+            embed.description = (
+                f"🌌 *ZOOOOM...* You safely navigated jump {self.jumps}!"
+            )
             await interaction.response.edit_message(embed=embed, view=self)
 
-    @discord.ui.button(label="Cash Out 💰", style=discord.ButtonStyle.blurple)
+    @discord.ui.button(label="Return to Base 💰", style=discord.ButtonStyle.blurple)
     async def cash_out(
         self, interaction: discord.Interaction, button: discord.ui.Button
     ):
         if interaction.user.id != self.ctx.author.id:
             return await interaction.response.send_message(
-                "Not your game!", ephemeral=True
+                "Not your ship!", ephemeral=True
             )
-        if self.survivals == 0:
+        if self.jumps == 0:
             return await interaction.response.send_message(
-                "❌ You must pull the trigger at least once!", ephemeral=True
+                "❌ You must jump at least once before returning!", ephemeral=True
             )
 
         for child in self.children:
@@ -443,8 +445,8 @@ class RRView(discord.ui.View):
             await increment_stat("chips_earnt", payout - self.bet)
 
         embed = discord.Embed(
-            title="🔫 Russian Roulette",
-            description=f"🏃‍♂️ **Walked away alive!** You cashed out **{payout:,} Chips** ({self.multiplier:.2f}×)!",
+            title="🚀 Hyperwarp Drive",
+            description=f"🛸 **Safely docked!** You returned to base with **{payout:,} Chips** ({self.multiplier:.2f}×)!",
             color=discord.Color.green(),
         )
         await interaction.response.edit_message(embed=embed, view=self)
@@ -458,7 +460,7 @@ class RRView(discord.ui.View):
                 await self.message.edit(view=self)
             except Exception:
                 pass
-        if self.survivals > 0:
+        if self.jumps > 0:
             payout = int(self.bet * self.multiplier)
             await update_chips(self.ctx.author.id, payout)
         else:
@@ -490,10 +492,10 @@ class Gamble(commands.Cog):
             return -1
 
     # ── Russian Roulette ──────────────────────────────────────────────────────
-    @commands.command(name="rr", aliases=["russianroulette"])
+    @commands.command(name="warp", aliases=["hyperwarp", "hyperjump", "wj"])
     @commands.cooldown(1, 15, commands.BucketType.user)
-    async def rr(self, ctx, amount: str):
-        """Play Russian Roulette for exponential rewards!"""
+    async def warp(self, ctx, amount: str):
+        """Push the Hyperwarp Drive for exponential rewards!"""
         bet = await self.get_bet_amount(ctx, amount)
         if bet == -1:
             return ctx.command.reset_cooldown(ctx)
@@ -506,11 +508,11 @@ class Gamble(commands.Cog):
             )
 
         await update_chips(ctx.author.id, -bet)
-        view = RRView(self, ctx, bet, track_stats=(ctx.author.id != self.boss_id))
+        view = WarpView(self, ctx, bet, track_stats=(ctx.author.id != self.boss_id))
         embed = discord.Embed(
-            title="🔫 Russian Roulette",
-            description="The cylinder spins... Dare to pull the trigger?",
-            color=discord.Color.dark_red(),
+            title="🚀 Hyperwarp Drive",
+            description="The engines are humming... Dare to initiate warp?",
+            color=discord.Color.blue(),
         )
         msg = await ctx.send(embed=embed, view=view)
         view.message = msg
