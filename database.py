@@ -50,6 +50,18 @@ async def init_db():
                 value INTEGER NOT NULL DEFAULT 0
             )
         """)
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS user_game_stats (
+                user_id INTEGER NOT NULL,
+                game    TEXT NOT NULL,
+                played  INTEGER DEFAULT 0,
+                wagered INTEGER DEFAULT 0,
+                earnt   INTEGER DEFAULT 0,
+                lost    INTEGER DEFAULT 0,
+                biggest_win INTEGER DEFAULT 0,
+                PRIMARY KEY (user_id, game)
+            )
+        """)
         await db.commit()
 
         # Safe migration: add pet streak columns
@@ -171,6 +183,31 @@ async def reset_chip_stats() -> None:
                 (key,)
             )
         await db.commit()
+
+# --- PER-USER GAME STATS ---
+async def record_user_game(user_id: int, game: str, wagered: int, earnt: int = 0, lost: int = 0, biggest_win: int = 0) -> None:
+    async with aiosqlite.connect(DB_NAME) as db:
+        await db.execute("""
+            INSERT INTO user_game_stats (user_id, game, played, wagered, earnt, lost, biggest_win)
+            VALUES (?, ?, 1, ?, ?, ?, ?)
+            ON CONFLICT(user_id, game) DO UPDATE SET
+                played      = played + 1,
+                wagered     = wagered + excluded.wagered,
+                earnt       = earnt + excluded.earnt,
+                lost        = lost + excluded.lost,
+                biggest_win = MAX(biggest_win, excluded.biggest_win)
+        """, (user_id, game, wagered, earnt, lost, biggest_win))
+        await db.commit()
+
+async def get_user_game_stats(user_id: int) -> dict:
+    """Returns a dict keyed by game name → (played, wagered, earnt, lost, biggest_win)."""
+    async with aiosqlite.connect(DB_NAME) as db:
+        async with db.execute(
+            "SELECT game, played, wagered, earnt, lost, biggest_win FROM user_game_stats WHERE user_id = ?",
+            (user_id,)
+        ) as cursor:
+            rows = await cursor.fetchall()
+    return {row[0]: row[1:] for row in rows}
 
 # --- ALLOWED CHANNELS ---
 async def add_allowed_channel(channel_id: int):

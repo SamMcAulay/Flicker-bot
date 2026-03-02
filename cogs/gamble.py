@@ -3,7 +3,7 @@ import random
 import asyncio
 import itertools
 from discord.ext import commands
-from database import get_chips, update_chips, increment_stat
+from database import get_chips, update_chips, increment_stat, record_user_game, get_user_game_stats
 
 # ── Animated emojis ───────────────────────────────────────────────
 ANIM_COIN = "<a:coinflip:1474782979095007404>"
@@ -145,6 +145,9 @@ class BlackjackView(discord.ui.View):
                 await increment_stat("chips_earnt", winnings - self.bet)
             elif winnings == 0:
                 await increment_stat("chips_lost", self.bet)
+            net_earnt = winnings - self.bet if winnings > self.bet else 0
+            net_lost = self.bet if winnings == 0 else 0
+            await record_user_game(self.ctx.author.id, "blackjack", self.bet, earnt=net_earnt, lost=net_lost, biggest_win=net_earnt)
 
         embed = self.build_embed(reveal_dealer=True)
         embed.color = color
@@ -205,6 +208,7 @@ class BlackjackView(discord.ui.View):
         await update_chips(self.ctx.author.id, self.bet)
         if self.track_stats:
             await increment_stat("chips_wagered", self.bet)
+            await record_user_game(self.ctx.author.id, "blackjack", self.bet)
 
 
 # ── Higher or Lower View ──────────────────────────────────────────────────────
@@ -303,6 +307,7 @@ class HiloView(discord.ui.View):
             if self.track_stats:
                 await increment_stat("chips_wagered", self.bet)
                 await increment_stat("chips_lost", self.bet)
+                await record_user_game(self.ctx.author.id, "hilo", self.bet, lost=self.bet)
             embed = discord.Embed(
                 title="🃏 Higher or Lower",
                 description=f"❌ **Wrong!** Next card was **{next_card}** ({next_val}). You lost **{self.bet:,} Chips**.",
@@ -319,6 +324,7 @@ class HiloView(discord.ui.View):
         if self.track_stats:
             await increment_stat("chips_wagered", self.bet)
             await increment_stat("chips_earnt", payout - self.bet)
+            await record_user_game(self.ctx.author.id, "hilo", self.bet, earnt=payout - self.bet, biggest_win=payout - self.bet)
         embed = discord.Embed(
             title="🃏 Higher or Lower",
             description=f"💰 **Cashed out!** You won **{payout:,} Chips** ({self.multiplier()}×)!",
@@ -363,10 +369,12 @@ class HiloView(discord.ui.View):
             if self.track_stats:
                 await increment_stat("chips_wagered", self.bet)
                 await increment_stat("chips_earnt", payout - self.bet)
+                await record_user_game(self.ctx.author.id, "hilo", self.bet, earnt=payout - self.bet, biggest_win=payout - self.bet)
         else:
             await update_chips(self.ctx.author.id, self.bet)
             if self.track_stats:
                 await increment_stat("chips_wagered", self.bet)
+                await record_user_game(self.ctx.author.id, "hilo", self.bet)
 
 
 # ── Russian Roulette View ─────────────────────────────────────────────────────
@@ -412,6 +420,7 @@ class WarpView(discord.ui.View):
             if self.track_stats:
                 await increment_stat("chips_wagered", self.bet)
                 await increment_stat("chips_lost", self.bet)
+                await record_user_game(self.ctx.author.id, "warp", self.bet, lost=self.bet)
 
             embed = discord.Embed(
                 title="🚀 Hyperwarp Drive",
@@ -455,6 +464,7 @@ class WarpView(discord.ui.View):
         if self.track_stats:
             await increment_stat("chips_wagered", self.bet)
             await increment_stat("chips_earnt", payout - self.bet)
+            await record_user_game(self.ctx.author.id, "warp", self.bet, earnt=payout - self.bet, biggest_win=payout - self.bet)
 
         embed = discord.Embed(
             title="🚀 Hyperwarp Drive",
@@ -478,10 +488,12 @@ class WarpView(discord.ui.View):
             if self.track_stats:
                 await increment_stat("chips_wagered", self.bet)
                 await increment_stat("chips_earnt", payout - self.bet)
+                await record_user_game(self.ctx.author.id, "warp", self.bet, earnt=payout - self.bet, biggest_win=payout - self.bet)
         else:
             await update_chips(self.ctx.author.id, self.bet)
             if self.track_stats:
                 await increment_stat("chips_wagered", self.bet)
+                await record_user_game(self.ctx.author.id, "warp", self.bet)
 
 
 # ── Gamble Cog ────────────────────────────────────────────────────────────────
@@ -582,12 +594,14 @@ class Gamble(commands.Cog):
             if ctx.author.id != self.boss_id:
                 await increment_stat("chips_wagered", bet)
                 await increment_stat("chips_earnt", winnings - bet)
+                await record_user_game(ctx.author.id, "coinflip", bet, earnt=winnings - bet, biggest_win=winnings - bet)
             embed.color = discord.Color.green()
             embed.description = f"**{ctx.author.display_name}** spent **{bet:,}** Chips and chose **{user_guess}**.\n\nIt landed on **{result}**! {result_icon}\n🎉 You won **{winnings:,}** Chips!"
         else:
             if ctx.author.id != self.boss_id:
                 await increment_stat("chips_wagered", bet)
                 await increment_stat("chips_lost", bet)
+                await record_user_game(ctx.author.id, "coinflip", bet, lost=bet)
             embed.color = discord.Color.red()
             embed.description = f"**{ctx.author.display_name}** spent **{bet:,}** Chips and chose **{user_guess}**.\n\nIt landed on **{result}**! {result_icon}\n❌ You lost **{bet:,}** Chips."
         await msg.edit(embed=embed)
@@ -670,6 +684,7 @@ class Gamble(commands.Cog):
             if ctx.author.id != self.boss_id:
                 await increment_stat("chips_wagered", bet)
                 await increment_stat("chips_earnt", winnings - bet)
+                await record_user_game(ctx.author.id, "slots", bet, earnt=winnings - bet, biggest_win=winnings - bet)
             embed.color = discord.Color.green()
             result_text += (
                 f"🎉 **WINNER!** 🎉\nYou won **{winnings:,}** Chips! ({multiplier}×)"
@@ -678,6 +693,7 @@ class Gamble(commands.Cog):
             if ctx.author.id != self.boss_id:
                 await increment_stat("chips_wagered", bet)
                 await increment_stat("chips_lost", bet)
+                await record_user_game(ctx.author.id, "slots", bet, lost=bet)
             embed.color = discord.Color.red()
             result_text += "❌ **Lost!** ❌\nBetter luck next time."
 
@@ -714,6 +730,7 @@ class Gamble(commands.Cog):
             if ctx.author.id != self.boss_id:
                 await increment_stat("chips_wagered", bet)
                 await increment_stat("chips_earnt", payout - bet)
+                await record_user_game(ctx.author.id, "blackjack", bet, earnt=payout - bet, biggest_win=payout - bet)
             embed = discord.Embed(
                 title="🃏 Blackjack — Natural 21!",
                 description=f"**{fmt_hand(player_hand)}**\n\n🎉 **Blackjack! You win {payout:,} Chips!** (2.5×)",
@@ -828,6 +845,7 @@ class Gamble(commands.Cog):
             if ctx.author.id != self.boss_id:
                 await increment_stat("chips_wagered", bet)
                 await increment_stat("chips_earnt", winnings - bet)
+                await record_user_game(ctx.author.id, "roulette", bet, earnt=winnings - bet, biggest_win=winnings - bet)
             embed.color = discord.Color.green()
             embed.description = (
                 f"{result_line}\n\n🎉 **You win {winnings:,} Chips!** ({multiplier}×)"
@@ -836,11 +854,83 @@ class Gamble(commands.Cog):
             if ctx.author.id != self.boss_id:
                 await increment_stat("chips_wagered", bet)
                 await increment_stat("chips_lost", bet)
+                await record_user_game(ctx.author.id, "roulette", bet, lost=bet)
             embed.color = discord.Color.red()
             embed.description = f"{result_line}\n\n❌ **You lost {bet:,} Chips.**"
 
         embed.set_footer(text=f"Bet: {bet_input} · {bet:,} Chips wagered")
         await msg.edit(embed=embed)
+
+    # ── My Stats ──────────────────────────────────────────────────────────────
+    @commands.command(name="me")
+    async def me(self, ctx, user: discord.Member = None):
+        """Show your personal gambling stats (or another user's with @mention)."""
+        target = user or ctx.author
+        stats = await get_user_game_stats(target.id)
+
+        if not stats:
+            embed = discord.Embed(
+                description=f"**{target.display_name}** has no gambling history yet.",
+                color=discord.Color.greyple(),
+            )
+            return await ctx.send(embed=embed)
+
+        GAME_LABELS = {
+            "coinflip":  "🪙 Coinflip",
+            "slots":     "🎰 Slots",
+            "blackjack": "🃏 Blackjack",
+            "hilo":      "🃏 Higher/Lower",
+            "warp":      "🚀 Warp",
+            "roulette":  "🎡 Roulette",
+        }
+
+        total_played = total_wagered = total_earnt = total_lost = total_best = 0
+        fields = []
+        for game_key in ("coinflip", "slots", "blackjack", "hilo", "warp", "roulette"):
+            if game_key not in stats:
+                continue
+            played, wagered, earnt, lost, biggest_win = stats[game_key]
+            total_played  += played
+            total_wagered += wagered
+            total_earnt   += earnt
+            total_lost    += lost
+            if biggest_win > total_best:
+                total_best = biggest_win
+
+            net = earnt - lost
+            net_str = f"+{net:,}" if net >= 0 else f"{net:,}"
+            fields.append((
+                GAME_LABELS.get(game_key, game_key),
+                (
+                    f"Played: {played:,}\n"
+                    f"Wagered: {wagered:,}\n"
+                    f"Won: +{earnt:,}\n"
+                    f"Lost: -{lost:,}\n"
+                    f"Net: {net_str}\n"
+                    f"Best Win: {biggest_win:,}"
+                ),
+            ))
+
+        total_net = total_earnt - total_lost
+        embed_color = discord.Color.green() if total_net >= 0 else discord.Color.red()
+        net_display = f"+{total_net:,}" if total_net >= 0 else f"{total_net:,}"
+
+        embed = discord.Embed(
+            title=f"🎮 {target.display_name}'s Gambling Profile",
+            color=embed_color,
+        )
+        for name, value in fields:
+            embed.add_field(name=name, value=value, inline=True)
+
+        embed.add_field(
+            name="📊 Overall",
+            value=(
+                f"Games Played: {total_played:,} · Wagered: {total_wagered:,}\n"
+                f"Net: {net_display} · Best Win: {total_best:,}"
+            ),
+            inline=False,
+        )
+        await ctx.send(embed=embed)
 
     # ── Error handler ─────────────────────────────────────────────────────────
     async def cog_command_error(self, ctx, error):
