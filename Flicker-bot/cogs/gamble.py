@@ -59,6 +59,7 @@ class BlackjackView(discord.ui.View):
         player_hand: list,
         dealer_hand: list,
         track_stats: bool = True,
+        win_multiplier: float = 2.0,
     ):
         super().__init__(timeout=30)
         self.cog = cog
@@ -68,6 +69,7 @@ class BlackjackView(discord.ui.View):
         self.player_hand = player_hand
         self.dealer_hand = dealer_hand
         self.track_stats = track_stats
+        self.win_multiplier = win_multiplier
         self.message = None
 
     def build_embed(self, reveal_dealer=False) -> discord.Embed:
@@ -126,7 +128,7 @@ class BlackjackView(discord.ui.View):
         if pval > 21:
             result, color, winnings = "💥 Bust! You lose.", discord.Color.red(), 0
         elif dval > 21 or pval > dval:
-            result, color, winnings = "🎉 You win!", discord.Color.green(), self.bet * 2
+            result, color, winnings = "🎉 You win!", discord.Color.green(), int(self.bet * self.win_multiplier)
         elif pval == dval:
             result, color, winnings = (
                 "🤝 Push — bet returned.",
@@ -380,12 +382,13 @@ class HiloView(discord.ui.View):
 
 # ── Russian Roulette View ─────────────────────────────────────────────────────
 class WarpView(discord.ui.View):
-    def __init__(self, cog, ctx, bet: int, track_stats: bool = True):
+    def __init__(self, cog, ctx, bet: int, track_stats: bool = True, warp_step: float = 1.5):
         super().__init__(timeout=30)
         self.cog = cog
         self.ctx = ctx
         self.bet = bet
         self.track_stats = track_stats
+        self.warp_step = warp_step
         self.jumps = 0
         self.multiplier = 1.0
         self.message = None
@@ -434,9 +437,9 @@ class WarpView(discord.ui.View):
             # SUCCESSFUL JUMP
             self.jumps += 1
             if self.jumps == 1:
-                self.multiplier = 1.5
+                self.multiplier = self.warp_step
             else:
-                self.multiplier *= 1.5  # Exponential multiplier
+                self.multiplier *= self.warp_step
 
             embed = self.build_embed()
             embed.description = (
@@ -526,11 +529,13 @@ class Gamble(commands.Cog):
     @commands.cooldown(1, 15, commands.BucketType.user)
     async def warp(self, ctx, amount: str):
         """Push the Hyperwarp Drive for exponential rewards!"""
+        warp_step = 1.5
         if ctx.guild:
             settings = await get_server_settings(ctx.guild.id)
             if not settings["game_toggles"].get("warp", True):
                 ctx.command.reset_cooldown(ctx)
                 return await ctx.send("❌ Warp is disabled in this server.")
+            warp_step = settings["payout_overrides"].get("warp_multiplier_step", 1.5)
         bet = await self.get_bet_amount(ctx, amount)
         if bet == -1:
             return ctx.command.reset_cooldown(ctx)
@@ -543,7 +548,7 @@ class Gamble(commands.Cog):
             )
 
         await update_chips(ctx.author.id, -bet)
-        view = WarpView(self, ctx, bet, track_stats=(ctx.author.id != self.boss_id))
+        view = WarpView(self, ctx, bet, track_stats=(ctx.author.id != self.boss_id), warp_step=warp_step)
         embed = discord.Embed(
             title="🚀 Hyperwarp Drive",
             description="The engines are humming... Dare to initiate warp?",
@@ -727,11 +732,15 @@ class Gamble(commands.Cog):
     @commands.cooldown(1, 15, commands.BucketType.user)
     async def blackjack(self, ctx, amount: str):
         """Play Blackjack against the dealer using Chips!"""
+        bj_win_mult = 2.0
+        bj_natural_mult = 2.5
         if ctx.guild:
             settings = await get_server_settings(ctx.guild.id)
             if not settings["game_toggles"].get("blackjack", True):
                 ctx.command.reset_cooldown(ctx)
                 return await ctx.send("❌ Blackjack is disabled in this server.")
+            bj_win_mult = settings["payout_overrides"].get("blackjack_win_multiplier", 2.0)
+            bj_natural_mult = settings["payout_overrides"].get("blackjack_natural_multiplier", 2.5)
         bet = await self.get_bet_amount(ctx, amount)
         if bet == -1:
             return ctx.command.reset_cooldown(ctx)
@@ -750,7 +759,7 @@ class Gamble(commands.Cog):
         dealer_hand = [deck.pop(), deck.pop()]
 
         if hand_value(player_hand) == 21:
-            payout = int(bet * 2.5)
+            payout = int(bet * bj_natural_mult)
             await update_chips(ctx.author.id, payout)
             if ctx.author.id != self.boss_id:
                 await increment_stat("chips_wagered", bet)
@@ -771,6 +780,7 @@ class Gamble(commands.Cog):
             player_hand,
             dealer_hand,
             track_stats=(ctx.author.id != self.boss_id),
+            win_multiplier=bj_win_mult,
         )
         msg = await ctx.send(embed=view.build_embed(), view=view)
         view.message = msg
@@ -820,11 +830,15 @@ class Gamble(commands.Cog):
     @commands.cooldown(1, 15, commands.BucketType.user)
     async def roulette(self, ctx, amount: str, *, bet_input: str):
         """Bet on the Starwheel! Usage: !roulette <chips> <red|black|odd|even|0-36>"""
+        rt_color_mult = 1.9
+        rt_number_mult = 35.0
         if ctx.guild:
             settings = await get_server_settings(ctx.guild.id)
             if not settings["game_toggles"].get("roulette", True):
                 ctx.command.reset_cooldown(ctx)
                 return await ctx.send("❌ Roulette is disabled in this server.")
+            rt_color_mult = settings["payout_overrides"].get("roulette_color_multiplier", 1.9)
+            rt_number_mult = settings["payout_overrides"].get("roulette_number_multiplier", 35.0)
         bet = await self.get_bet_amount(ctx, amount)
         if bet == -1:
             return ctx.command.reset_cooldown(ctx)
@@ -866,15 +880,15 @@ class Gamble(commands.Cog):
         await asyncio.sleep(0.8)
 
         if bet_type == "red":
-            won, multiplier = result in ROULETTE_RED, 1.9
+            won, multiplier = result in ROULETTE_RED, rt_color_mult
         elif bet_type == "black":
-            won, multiplier = result in ROULETTE_BLACK, 1.9
+            won, multiplier = result in ROULETTE_BLACK, rt_color_mult
         elif bet_type == "odd":
-            won, multiplier = result != 0 and result % 2 == 1, 1.9
+            won, multiplier = result != 0 and result % 2 == 1, rt_color_mult
         elif bet_type == "even":
-            won, multiplier = result != 0 and result % 2 == 0, 1.9
+            won, multiplier = result != 0 and result % 2 == 0, rt_color_mult
         else:
-            won, multiplier = result == int(bet_type), 35.0
+            won, multiplier = result == int(bet_type), rt_number_mult
 
         result_line = f"The wheel landed on **{result_color} {result}**!"
         if won:

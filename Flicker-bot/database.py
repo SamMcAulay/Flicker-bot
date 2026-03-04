@@ -335,7 +335,16 @@ async def get_vc_config(guild_id: int):
 _DEFAULT_GAME_TOGGLES = {"coinflip": True, "slots": True, "blackjack": True, "hilo": True, "roulette": True, "warp": True}
 _DEFAULT_EVENT_TOGGLES = {"chat_drops": True, "trivia": True, "math": True, "fast_type": True, "word_scramble": True}
 _DEFAULT_COMMAND_TOGGLES = {"balance": True, "pay": True, "buychips": True, "top": True}
-_DEFAULT_PAYOUT_OVERRIDES = {"slots_jackpot": 10, "hilo_step": 0.2, "coinflip_multiplier": 2.0}
+_DEFAULT_PAYOUT_OVERRIDES = {
+    "slots_jackpot": 10,
+    "hilo_step": 0.2,
+    "coinflip_multiplier": 2.0,
+    "blackjack_win_multiplier": 2.0,
+    "blackjack_natural_multiplier": 2.5,
+    "roulette_color_multiplier": 1.9,
+    "roulette_number_multiplier": 35.0,
+    "warp_multiplier_step": 1.5,
+}
 
 
 async def get_server_settings(guild_id: int) -> dict:
