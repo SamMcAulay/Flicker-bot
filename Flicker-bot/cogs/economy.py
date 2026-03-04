@@ -1,6 +1,6 @@
 import discord
 from discord.ext import commands
-from database import get_balance, update_balance, get_chips, update_chips, get_top_users
+from database import get_balance, update_balance, get_chips, update_chips, get_top_users, get_server_settings
 
 
 class PayConfirmView(discord.ui.View):
@@ -83,6 +83,10 @@ class Economy(commands.Cog):
     @commands.command(name="balance", aliases=["bal", "wallet", "b"])
     async def balance(self, ctx):
         """Check your Stardust and Chips balance."""
+        if ctx.guild:
+            settings = await get_server_settings(ctx.guild.id)
+            if not settings["command_toggles"].get("balance", True):
+                return await ctx.send("❌ That command is disabled in this server.")
         stardust = await get_balance(ctx.author.id)
         chips = await get_chips(ctx.author.id)
 
@@ -123,6 +127,10 @@ class Economy(commands.Cog):
     @commands.command(name="buychips", aliases=["bc"])
     async def buy_chips(self, ctx, amount_str: str):
         """Convert Stardust into Chips. Rate: 1 Stardust = 50 Chips."""
+        if ctx.guild:
+            settings = await get_server_settings(ctx.guild.id)
+            if not settings["command_toggles"].get("buychips", True):
+                return await ctx.send("❌ That command is disabled in this server.")
         balance = await get_balance(ctx.author.id)
 
         if amount_str.lower() in ["all", "max"]:
@@ -167,6 +175,9 @@ class Economy(commands.Cog):
         """Display the richest users for both currencies."""
         if not ctx.guild:
             return await ctx.send("❌ This command can only be used in a server.")
+        settings = await get_server_settings(ctx.guild.id)
+        if not settings["command_toggles"].get("top", True):
+            return await ctx.send("❌ That command is disabled in this server.")
         top_stardust, top_chips = await get_top_users(10)
 
         def format_entries(entries):
@@ -196,6 +207,10 @@ class Economy(commands.Cog):
     @commands.command(name="pay", aliases=["transfer", "give"])
     async def pay(self, ctx, member: discord.Member, amount_str: str):
         """Send Stardust to another user! (Usage: !pay @user 100)"""
+        if ctx.guild:
+            settings = await get_server_settings(ctx.guild.id)
+            if not settings["command_toggles"].get("pay", True):
+                return await ctx.send("❌ That command is disabled in this server.")
 
         if member.bot:
             return await ctx.send(

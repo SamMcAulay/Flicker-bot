@@ -3,7 +3,7 @@ import random
 import asyncio
 import itertools
 from discord.ext import commands
-from database import get_chips, update_chips, increment_stat, record_user_game, get_user_game_stats
+from database import get_chips, update_chips, increment_stat, record_user_game, get_user_game_stats, get_server_settings
 
 # ── Animated emojis ───────────────────────────────────────────────
 ANIM_COIN = "<a:coinflip:1474782979095007404>"
@@ -221,6 +221,7 @@ class HiloView(discord.ui.View):
         deck: list,
         current_card: str,
         track_stats: bool = True,
+        hilo_step: float = 0.2,
     ):
         super().__init__(timeout=30)
         self.cog = cog
@@ -230,11 +231,11 @@ class HiloView(discord.ui.View):
         self.current_card = current_card
         self.streak = 0
         self.track_stats = track_stats
+        self.hilo_step = hilo_step
         self.message = None
 
     def multiplier(self) -> float:
-        # Adds 0.2x endlessly per correct guess
-        return round(1.0 + (self.streak * 0.2), 2)
+        return round(1.0 + (self.streak * self.hilo_step), 2)
 
     def build_embed(self) -> discord.Embed:
         mult = self.multiplier()
@@ -525,6 +526,11 @@ class Gamble(commands.Cog):
     @commands.cooldown(1, 15, commands.BucketType.user)
     async def warp(self, ctx, amount: str):
         """Push the Hyperwarp Drive for exponential rewards!"""
+        if ctx.guild:
+            settings = await get_server_settings(ctx.guild.id)
+            if not settings["game_toggles"].get("warp", True):
+                ctx.command.reset_cooldown(ctx)
+                return await ctx.send("❌ Warp is disabled in this server.")
         bet = await self.get_bet_amount(ctx, amount)
         if bet == -1:
             return ctx.command.reset_cooldown(ctx)
@@ -551,6 +557,13 @@ class Gamble(commands.Cog):
     @commands.cooldown(1, 15, commands.BucketType.user)
     async def coinflip(self, ctx, amount: str, choice: str = "h"):
         """Gamble Chips on a coinflip! Default choice is heads."""
+        cf_multiplier = 2.0
+        if ctx.guild:
+            settings = await get_server_settings(ctx.guild.id)
+            if not settings["game_toggles"].get("coinflip", True):
+                ctx.command.reset_cooldown(ctx)
+                return await ctx.send("❌ Coinflip is disabled in this server.")
+            cf_multiplier = settings["payout_overrides"].get("coinflip_multiplier", 2.0)
         bet = await self.get_bet_amount(ctx, amount)
         if bet == -1:
             return ctx.command.reset_cooldown(ctx)
@@ -589,7 +602,7 @@ class Gamble(commands.Cog):
 
         result_icon = STATIC_HEADS if result == "heads" else STATIC_TAILS
         if user_guess == result:
-            winnings = bet * 2
+            winnings = int(bet * cf_multiplier)
             await update_chips(ctx.author.id, winnings)
             if ctx.author.id != self.boss_id:
                 await increment_stat("chips_wagered", bet)
@@ -611,6 +624,13 @@ class Gamble(commands.Cog):
     @commands.cooldown(1, 15, commands.BucketType.user)
     async def slots(self, ctx, amount: str):
         """Play the Cosmic Chip Slots!"""
+        slots_jackpot = 10
+        if ctx.guild:
+            settings = await get_server_settings(ctx.guild.id)
+            if not settings["game_toggles"].get("slots", True):
+                ctx.command.reset_cooldown(ctx)
+                return await ctx.send("❌ Slots are disabled in this server.")
+            slots_jackpot = int(settings["payout_overrides"].get("slots_jackpot", 10))
         bet = await self.get_bet_amount(ctx, amount)
         if bet == -1:
             return ctx.command.reset_cooldown(ctx)
@@ -627,7 +647,7 @@ class Gamble(commands.Cog):
 
         if ctx.author.id == self.boss_id:
             if chance < 0.05:
-                final_reels, multiplier = ["💎", "💎", "💎"], 10
+                final_reels, multiplier = ["💎", "💎", "💎"], slots_jackpot
             elif chance < 0.15:
                 final_reels, multiplier = ["⭐", "⭐", "⭐"], 5
             elif chance < 0.35:
@@ -646,7 +666,7 @@ class Gamble(commands.Cog):
             # Mathematical 80% Expected Value (RTP) Setup:
             # (0.02*10) + (0.04*5) + (0.08*3) + (0.08*2) = 0.80 EV
             if chance < 0.02:
-                final_reels, multiplier = ["💎", "💎", "💎"], 10  # 2%
+                final_reels, multiplier = ["💎", "💎", "💎"], slots_jackpot  # 2%
             elif chance < 0.06:
                 final_reels, multiplier = ["⭐", "⭐", "⭐"], 5  # 4%
             elif chance < 0.14:  # 8%
@@ -707,6 +727,11 @@ class Gamble(commands.Cog):
     @commands.cooldown(1, 15, commands.BucketType.user)
     async def blackjack(self, ctx, amount: str):
         """Play Blackjack against the dealer using Chips!"""
+        if ctx.guild:
+            settings = await get_server_settings(ctx.guild.id)
+            if not settings["game_toggles"].get("blackjack", True):
+                ctx.command.reset_cooldown(ctx)
+                return await ctx.send("❌ Blackjack is disabled in this server.")
         bet = await self.get_bet_amount(ctx, amount)
         if bet == -1:
             return ctx.command.reset_cooldown(ctx)
@@ -755,6 +780,13 @@ class Gamble(commands.Cog):
     @commands.cooldown(1, 15, commands.BucketType.user)
     async def hilo(self, ctx, amount: str):
         """Guess Higher or Lower for escalating Chip multipliers!"""
+        hilo_step = 0.2
+        if ctx.guild:
+            settings = await get_server_settings(ctx.guild.id)
+            if not settings["game_toggles"].get("hilo", True):
+                ctx.command.reset_cooldown(ctx)
+                return await ctx.send("❌ HiLo is disabled in this server.")
+            hilo_step = settings["payout_overrides"].get("hilo_step", 0.2)
         bet = await self.get_bet_amount(ctx, amount)
         if bet == -1:
             return ctx.command.reset_cooldown(ctx)
@@ -778,6 +810,7 @@ class Gamble(commands.Cog):
             deck,
             current_card,
             track_stats=(ctx.author.id != self.boss_id),
+            hilo_step=hilo_step,
         )
         msg = await ctx.send(embed=view.build_embed(), view=view)
         view.message = msg
@@ -787,6 +820,11 @@ class Gamble(commands.Cog):
     @commands.cooldown(1, 15, commands.BucketType.user)
     async def roulette(self, ctx, amount: str, *, bet_input: str):
         """Bet on the Starwheel! Usage: !roulette <chips> <red|black|odd|even|0-36>"""
+        if ctx.guild:
+            settings = await get_server_settings(ctx.guild.id)
+            if not settings["game_toggles"].get("roulette", True):
+                ctx.command.reset_cooldown(ctx)
+                return await ctx.send("❌ Roulette is disabled in this server.")
         bet = await self.get_bet_amount(ctx, amount)
         if bet == -1:
             return ctx.command.reset_cooldown(ctx)

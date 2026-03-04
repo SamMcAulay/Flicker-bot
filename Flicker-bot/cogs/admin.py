@@ -2,14 +2,26 @@ import discord
 from discord.ext import commands
 import aiosqlite
 import database
-from database import add_allowed_channel, remove_allowed_channel, get_allowed_channels, reset_chip_stats, get_all_stats, record_user_game, get_user_game_stats
+from database import (
+    add_allowed_channel,
+    remove_allowed_channel,
+    get_allowed_channels,
+    reset_chip_stats,
+    get_all_stats,
+    record_user_game,
+    get_user_game_stats,
+)
+
 
 class Admin(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
     async def cog_check(self, ctx):
-        return await self.bot.is_owner(ctx.author) or ctx.author.guild_permissions.administrator
+        return (
+            await self.bot.is_owner(ctx.author)
+            or ctx.author.guild_permissions.administrator
+        )
 
     @commands.command(name="trackC")
     async def track_channels(self, ctx, *channels: discord.TextChannel):
@@ -21,8 +33,10 @@ class Admin(commands.Cog):
         for channel in channels:
             await add_allowed_channel(channel.id)
             added_count += 1
-        
-        await ctx.send(f"✅ **Configuration Updated:** Flicker is now active in {added_count} channel(s).")
+
+        await ctx.send(
+            f"✅ **Configuration Updated:** Flicker is now active in {added_count} channel(s)."
+        )
 
     @commands.command(name="RmC")
     async def remove_channels(self, ctx, *channels: discord.TextChannel):
@@ -34,25 +48,27 @@ class Admin(commands.Cog):
         for channel in channels:
             await remove_allowed_channel(channel.id)
             removed_count += 1
-            
-        await ctx.send(f"🚫 **Configuration Updated:** Flicker has stopped tracking {removed_count} channel(s).")
+
+        await ctx.send(
+            f"🚫 **Configuration Updated:** Flicker has stopped tracking {removed_count} channel(s)."
+        )
 
     @commands.command(name="ListC")
     async def list_channels(self, ctx):
         """Lists all channels where Flicker is active."""
         allowed_ids = await get_allowed_channels()
-        
+
         if not allowed_ids:
             await ctx.send("❌ Flicker is currently **inactive** in all channels.")
             return
 
         mentions = [f"<#{cid}>" for cid in allowed_ids]
         channel_list = "\n".join(mentions)
-        
+
         embed = discord.Embed(
             title="📡 Active Frequencies",
             description=f"Flicker will drop games in the following channels:\n\n{channel_list}",
-            color=discord.Color.blue()
+            color=discord.Color.blue(),
         )
         await ctx.send(embed=embed)
 
@@ -70,12 +86,13 @@ class Admin(commands.Cog):
             title="🗑️ Gambling Stats Reset",
             color=discord.Color.orange(),
         )
-        embed.add_field(name="chips_wagered", value=f"~~{wagered:,}~~ → 0", inline=False)
+        embed.add_field(
+            name="chips_wagered", value=f"~~{wagered:,}~~ → 0", inline=False
+        )
         embed.add_field(name="chips_earnt", value=f"~~{earnt:,}~~ → 0", inline=False)
         embed.add_field(name="chips_lost", value=f"~~{lost:,}~~ → 0", inline=False)
         embed.set_footer(text="User Stardust and Chips balances were not affected.")
         await ctx.send(embed=embed)
-
 
     @commands.command(name="dbcheck")
     async def dbcheck(self, ctx):
@@ -83,16 +100,16 @@ class Admin(commands.Cog):
         lines = []
         lines.append(f"DB path: `{database.DB_NAME}`")
 
-        # Step 1: check if table exists
         try:
             async with aiosqlite.connect(database.DB_NAME) as db:
-                async with db.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='user_game_stats'") as cur:
+                async with db.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table' AND name='user_game_stats'"
+                ) as cur:
                     row = await cur.fetchone()
             lines.append(f"Table exists: `{bool(row)}`")
         except Exception as e:
             lines.append(f"Table check error: `{e}`")
 
-        # Step 2: count rows in table
         try:
             async with aiosqlite.connect(database.DB_NAME) as db:
                 async with db.execute("SELECT COUNT(*) FROM user_game_stats") as cur:
@@ -101,24 +118,24 @@ class Admin(commands.Cog):
         except Exception as e:
             lines.append(f"Row count error: `{e}`")
 
-        # Step 3: write a test row for yourself
         try:
             await record_user_game(ctx.author.id, "_test_", 1)
             lines.append("Write test row: ✅ succeeded")
         except Exception as e:
             lines.append(f"Write test row error: `{e}`")
 
-        # Step 4: read it back
         try:
             stats = await get_user_game_stats(ctx.author.id)
             lines.append(f"Read back stats keys: `{list(stats.keys())}`")
         except Exception as e:
             lines.append(f"Read back error: `{e}`")
 
-        # Step 5: clean up the test row
         try:
             async with aiosqlite.connect(database.DB_NAME) as db:
-                await db.execute("DELETE FROM user_game_stats WHERE user_id = ? AND game = '_test_'", (ctx.author.id,))
+                await db.execute(
+                    "DELETE FROM user_game_stats WHERE user_id = ? AND game = '_test_'",
+                    (ctx.author.id,),
+                )
                 await db.commit()
             lines.append("Cleanup: ✅")
         except Exception as e:

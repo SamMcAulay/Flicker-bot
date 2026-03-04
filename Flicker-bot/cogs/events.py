@@ -5,7 +5,7 @@ import aiohttp
 import html
 import time
 from discord.ext import commands
-from database import update_balance, get_allowed_channels, increment_stat
+from database import update_balance, get_allowed_channels, increment_stat, get_server_settings
 
 SCRAMBLE_WORDS = [
     "nebula", "galaxy", "cosmos", "pulsar", "quasar", "meteor", "comet",
@@ -34,17 +34,23 @@ class Events(commands.Cog):
         if time.time() - self.last_event_time < self.cooldown_seconds:
             return
 
+        guild_id = message.guild.id if message.guild else None
+        event_toggles = {}
+        if guild_id:
+            settings = await get_server_settings(guild_id)
+            event_toggles = settings["event_toggles"]
+
         chance = random.random()
 
-        if chance < 0.05: # 5% Drop
+        if chance < 0.05 and event_toggles.get("chat_drops", True):
             await self.trigger_event(message.channel, "drop")
-        elif chance < 0.06: # 1% Trivia
+        elif chance < 0.06 and event_toggles.get("trivia", True):
             await self.trigger_event(message.channel, "trivia")
-        elif chance < 0.07: # 1% Math
+        elif chance < 0.07 and event_toggles.get("math", True):
             await self.trigger_event(message.channel, "math")
-        elif chance < 0.08: # 1% Fast Type
+        elif chance < 0.08 and event_toggles.get("fast_type", True):
             await self.trigger_event(message.channel, "fast_type")
-        elif chance < 0.09: # 1% Word Scramble
+        elif chance < 0.09 and event_toggles.get("word_scramble", True):
             await self.trigger_event(message.channel, "word_scramble")
 
     # --- DEV TOOL ---

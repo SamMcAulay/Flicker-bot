@@ -2,6 +2,7 @@ import discord
 import random
 import re
 from discord.ext import commands
+from database import get_custom_responses
 
 
 class Chat(commands.Cog):
@@ -184,6 +185,15 @@ class Chat(commands.Cog):
                 response = random.choice(responses)
             await message.channel.send(response)
             return
+
+        # Check server-specific custom responses
+        if message.guild:
+            custom_responses = await get_custom_responses(message.guild.id)
+            for (_, trigger_words_str, response_text) in custom_responses:
+                triggers = {t.strip().lower() for t in trigger_words_str.split(",") if t.strip()}
+                if words & triggers:
+                    await message.channel.send(response_text)
+                    return
 
         if random.random() < 0.01:
             responses = [
