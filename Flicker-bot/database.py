@@ -125,6 +125,13 @@ async def init_db():
         except aiosqlite.OperationalError:
             pass
 
+        # Safe migration: add prefix column to server_settings
+        try:
+            await db.execute("ALTER TABLE server_settings ADD COLUMN prefix TEXT DEFAULT '!'")
+            await db.commit()
+        except aiosqlite.OperationalError:
+            pass
+
 # --- ECONOMY ---
 async def get_balance(user_id: int) -> int:
     async with aiosqlite.connect(DB_NAME) as db:
@@ -384,7 +391,7 @@ async def get_server_settings(guild_id: int) -> dict:
     """Returns merged settings dict with defaults for any missing keys."""
     async with aiosqlite.connect(DB_NAME) as db:
         async with db.execute(
-            "SELECT command_toggles, game_toggles, event_toggles, payout_overrides, chat_toggles FROM server_settings WHERE guild_id = ?",
+            "SELECT command_toggles, game_toggles, event_toggles, payout_overrides, chat_toggles, prefix FROM server_settings WHERE guild_id = ?",
             (guild_id,)
         ) as cursor:
             row = await cursor.fetchone()
@@ -395,6 +402,7 @@ async def get_server_settings(guild_id: int) -> dict:
             "event_toggles": dict(_DEFAULT_EVENT_TOGGLES),
             "payout_overrides": dict(_DEFAULT_PAYOUT_OVERRIDES),
             "chat_toggles": dict(_DEFAULT_CHAT_TOGGLES),
+            "prefix": "!",
         }
     return {
         "command_toggles":  {**_DEFAULT_COMMAND_TOGGLES,  **json.loads(row[0] or "{}")},
@@ -402,6 +410,7 @@ async def get_server_settings(guild_id: int) -> dict:
         "event_toggles":    {**_DEFAULT_EVENT_TOGGLES,    **json.loads(row[2] or "{}")},
         "payout_overrides": {**_DEFAULT_PAYOUT_OVERRIDES, **json.loads(row[3] or "{}")},
         "chat_toggles":     {**_DEFAULT_CHAT_TOGGLES,     **json.loads(row[4] or "{}")},
+        "prefix": row[5] or "!",
     }
 
 
@@ -412,6 +421,7 @@ async def update_server_settings(
     event_toggles: dict = None,
     payout_overrides: dict = None,
     chat_toggles: dict = None,
+    prefix: str = None,
 ) -> None:
     """Upsert server settings, merging provided fields over existing values."""
     current = await get_server_settings(guild_id)
@@ -420,19 +430,21 @@ async def update_server_settings(
     new_et  = json.dumps({**current["event_toggles"],    **(event_toggles    or {})})
     new_po  = json.dumps({**current["payout_overrides"], **(payout_overrides or {})})
     new_cht = json.dumps({**current["chat_toggles"],     **(chat_toggles     or {})})
+    new_pfx = prefix if prefix is not None else current["prefix"]
     async with aiosqlite.connect(DB_NAME) as db:
         await db.execute(
             """
-            INSERT INTO server_settings (guild_id, command_toggles, game_toggles, event_toggles, payout_overrides, chat_toggles)
-            VALUES (?, ?, ?, ?, ?, ?)
+            INSERT INTO server_settings (guild_id, command_toggles, game_toggles, event_toggles, payout_overrides, chat_toggles, prefix)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(guild_id) DO UPDATE SET
                 command_toggles  = excluded.command_toggles,
                 game_toggles     = excluded.game_toggles,
                 event_toggles    = excluded.event_toggles,
                 payout_overrides = excluded.payout_overrides,
-                chat_toggles     = excluded.chat_toggles
+                chat_toggles     = excluded.chat_toggles,
+                prefix           = excluded.prefix
             """,
-            (guild_id, new_ct, new_gt, new_et, new_po, new_cht)
+            (guild_id, new_ct, new_gt, new_et, new_po, new_cht, new_pfx)
         )
         await db.commit()
 

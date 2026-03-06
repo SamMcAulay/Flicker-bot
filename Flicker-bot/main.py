@@ -3,7 +3,7 @@ import os
 import asyncio
 from discord.ext import commands
 from dotenv import load_dotenv
-from database import init_db
+from database import init_db, get_server_settings
 
 load_dotenv()
 TOKEN = os.getenv('DISCORD_TOKEN')
@@ -12,9 +12,17 @@ intents = discord.Intents.default()
 intents.message_content = True
 intents.members = True
 
+
+async def _get_prefix(bot, message):
+    if message.guild:
+        settings = await get_server_settings(message.guild.id)
+        return settings.get("prefix", "!")
+    return "!"
+
+
 class FlickerBot(commands.Bot):
     def __init__(self):
-        super().__init__(command_prefix='!', intents=intents, help_command=None)
+        super().__init__(command_prefix=_get_prefix, intents=intents, help_command=None)
 
     async def setup_hook(self):
         """This runs when the bot starts up."""

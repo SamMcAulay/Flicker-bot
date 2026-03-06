@@ -1,6 +1,7 @@
 import os
 import time
 import json
+import base64
 import jwt
 from aiohttp import web, ClientSession
 from discord.ext import commands
@@ -50,7 +51,7 @@ def _get_cors_headers(request) -> dict:
     allowed_origin = os.getenv("DASHBOARD_ORIGIN", "*")
     return {
         "Access-Control-Allow-Origin": allowed_origin,
-        "Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS",
+        "Access-Control-Allow-Methods": "GET, POST, PATCH, DELETE, OPTIONS",
         "Access-Control-Allow-Headers": "Content-Type, Authorization",
     }
 
@@ -127,6 +128,10 @@ class Api(commands.Cog):
         app.router.add_route("OPTIONS", "/api/response-groups/{guild_id}/{group_id}", self.handle_preflight)
         app.router.add_patch("/api/response-groups/{guild_id}/{group_id}", self.handle_toggle_group)
         app.router.add_delete("/api/response-groups/{guild_id}/{group_id}", self.handle_delete_group)
+
+        # Bot profile API
+        app.router.add_route("OPTIONS", "/api/profile/{guild_id}", self.handle_preflight)
+        app.router.add_post("/api/profile/{guild_id}", self.handle_update_profile)
 
         # Guild list for the server selector
         app.router.add_route("OPTIONS", "/api/guilds", self.handle_preflight)
@@ -270,8 +275,18 @@ class Api(commands.Cog):
         custom_responses = await get_custom_responses(guild_id)
         response_groups = await get_response_groups(guild_id)
 
+        # Build bot profile from live guild data
+        bot_profile = {"nickname": "", "avatar_url": str(self.bot.user.display_avatar.url)}
+        guild = self.bot.get_guild(guild_id)
+        if guild and guild.me:
+            me = guild.me
+            bot_profile["nickname"] = me.nick or ""
+            if me.guild_avatar:
+                bot_profile["avatar_url"] = str(me.guild_avatar.url)
+
         data = {
             **settings,
+            "bot_profile": bot_profile,
             "custom_responses": [
                 {"id": r[0], "trigger_words": r[1], "response_text": r[2]}
                 for r in custom_responses
@@ -367,6 +382,59 @@ class Api(commands.Cog):
         _require_auth(request, guild_id)
         group_id = int(request.match_info["group_id"])
         await delete_response_group(group_id)
+        return web.json_response({"ok": True}, headers=_get_cors_headers(request))
+
+    # ── Bot Profile API ────────────────────────────────────────────────────────
+
+    async def handle_update_profile(self, request: web.Request):
+        guild_id = int(request.match_info["guild_id"])
+        _require_auth(request, guild_id)
+
+        try:
+            body = await request.json()
+        except Exception:
+            raise web.HTTPBadRequest(reason="Invalid JSON")
+
+        guild = self.bot.get_guild(guild_id)
+        if not guild or not guild.me:
+            raise web.HTTPNotFound(reason="Guild not found")
+
+        me = guild.me
+        errors = []
+
+        # Update nickname
+        nickname = body.get("nickname")
+        if nickname is not None:
+            try:
+                await me.edit(nick=nickname or None)
+            except Exception as e:
+                errors.append(f"Nickname: {e}")
+
+        # Update guild avatar
+        avatar_data = body.get("avatar")
+        if avatar_data is not None:
+            try:
+                if avatar_data:
+                    # Expect a data URI: "data:image/png;base64,iVBOR..."
+                    _, encoded = avatar_data.split(",", 1)
+                    avatar_bytes = base64.b64decode(encoded)
+                    await me.edit(avatar=avatar_bytes)
+                else:
+                    await me.edit(avatar=None)  # reset to global
+            except Exception as e:
+                errors.append(f"Avatar: {e}")
+
+        # Update prefix
+        prefix = body.get("prefix")
+        if prefix is not None:
+            await update_server_settings(guild_id, prefix=prefix or "!")
+
+        if errors:
+            return web.json_response(
+                {"ok": False, "errors": errors},
+                status=207,
+                headers=_get_cors_headers(request),
+            )
         return web.json_response({"ok": True}, headers=_get_cors_headers(request))
 
 
