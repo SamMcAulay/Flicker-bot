@@ -103,21 +103,31 @@ class Events(commands.Cog):
 
         catchers = []
         caught_ids = set()
+        queue = asyncio.Queue()
 
-        def check(m):
-            return m.channel == channel and not m.author.bot and m.content.lower().strip() == "catch" and m.author.id not in caught_ids
+        async def catch_listener(message):
+            if (message.channel == channel
+                    and not message.author.bot
+                    and message.content.lower().strip() == "catch"
+                    and message.author.id not in caught_ids
+                    and len(catchers) < 5):
+                caught_ids.add(message.author.id)
+                await queue.put(message.author)
 
-        deadline = asyncio.get_event_loop().time() + 15.0
-        while len(catchers) < 5:
-            remaining = deadline - asyncio.get_event_loop().time()
-            if remaining <= 0:
-                break
-            try:
-                msg = await self.bot.wait_for('message', check=check, timeout=remaining)
-                caught_ids.add(msg.author.id)
-                catchers.append(msg.author)
-            except asyncio.TimeoutError:
-                break
+        self.bot.add_listener(catch_listener, 'on_message')
+        try:
+            deadline = asyncio.get_running_loop().time() + 15.0
+            while len(catchers) < 5:
+                remaining = deadline - asyncio.get_running_loop().time()
+                if remaining <= 0:
+                    break
+                try:
+                    user = await asyncio.wait_for(queue.get(), timeout=remaining)
+                    catchers.append(user)
+                except asyncio.TimeoutError:
+                    break
+        finally:
+            self.bot.remove_listener(catch_listener, 'on_message')
 
         if catchers:
             lines = []
