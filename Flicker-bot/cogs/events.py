@@ -111,14 +111,17 @@ class Events(commands.Cog):
 
         def build_embed(catchers):
             slots = []
+            next_idx = len(catchers)
             for i in range(5):
                 if i < len(catchers):
                     slots.append(f"**#{i + 1}** {catchers[i].mention} — **{rewards[i]} ✨**")
+                elif i == next_idx:
+                    slots.append(f"**#{i + 1}** **{rewards[i]} ✨** — type **catch**!")
                 else:
-                    slots.append(f"**#{i + 1}** {rewards[i]} ✨ — *unclaimed*")
+                    slots.append(f"**#{i + 1}** *???*")
             embed = discord.Embed(
                 title="✨ Ooh! Shiny!",
-                description="Someone dropped a pouch of Stardust!\nType **catch** to pick it up!\n\n" + "\n".join(slots),
+                description="Someone dropped a pouch of Stardust!\n\n" + "\n".join(slots),
                 color=discord.Color.magenta()
             )
             embed.set_footer(text="15 seconds to catch!")
