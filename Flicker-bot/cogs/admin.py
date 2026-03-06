@@ -96,35 +96,56 @@ class Admin(commands.Cog):
 
     @commands.command(name="migrateeconomy")
     async def migrate_economy(self, ctx):
-        """One-time migration: copies old global balances into this server's economy."""
+        """One-time migration: merges old global balances into this server's economy."""
         import aiosqlite
         async with aiosqlite.connect(database.DB_NAME) as db:
-            # Check old table has data
-            async with db.execute("SELECT COUNT(*) FROM users WHERE balance > 0 OR chips > 0") as cur:
-                count = (await cur.fetchone())[0]
-
-            if count == 0:
-                return await ctx.send("ℹ️ Nothing to migrate — the old users table is empty.")
-
-            # Copy every row that has a non-zero balance or chips into user_balances for this guild.
-            # INSERT OR IGNORE so re-running is safe and won't overwrite existing per-server rows.
+            # Tracking table so re-runs never double-count anyone
             await db.execute("""
-                INSERT OR IGNORE INTO user_balances (user_id, guild_id, balance, chips, pet_streak, last_pet_time)
-                SELECT user_id, ?, balance, chips,
-                       COALESCE(pet_streak, 0), COALESCE(last_pet_time, 0)
-                FROM users
-                WHERE balance > 0 OR chips > 0
-            """, (ctx.guild.id,))
+                CREATE TABLE IF NOT EXISTS economy_migration_log (
+                    user_id  INTEGER NOT NULL,
+                    guild_id INTEGER NOT NULL,
+                    PRIMARY KEY (user_id, guild_id)
+                )
+            """)
+
+            # Fetch old rows not yet migrated for this guild
+            async with db.execute("""
+                SELECT u.user_id, u.balance, u.chips,
+                       COALESCE(u.pet_streak, 0), COALESCE(u.last_pet_time, 0)
+                FROM users u
+                WHERE (u.balance > 0 OR u.chips > 0)
+                  AND NOT EXISTS (
+                      SELECT 1 FROM economy_migration_log m
+                      WHERE m.user_id = u.user_id AND m.guild_id = ?
+                  )
+            """, (ctx.guild.id,)) as cur:
+                rows = await cur.fetchall()
+
+            if not rows:
+                return await ctx.send("ℹ️ Nothing left to migrate — all users are already up to date.")
+
+            # For each user: ADD their old balance/chips onto whatever they may already have
+            # (handles users who earned currency in the window between deploy and migration)
+            for user_id, balance, chips, pet_streak, last_pet_time in rows:
+                await db.execute("""
+                    INSERT INTO user_balances (user_id, guild_id, balance, chips, pet_streak, last_pet_time)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(user_id, guild_id) DO UPDATE SET
+                        balance      = user_balances.balance      + excluded.balance,
+                        chips        = user_balances.chips        + excluded.chips,
+                        pet_streak   = MAX(user_balances.pet_streak,   excluded.pet_streak),
+                        last_pet_time = MAX(user_balances.last_pet_time, excluded.last_pet_time)
+                """, (user_id, ctx.guild.id, balance, chips, pet_streak, last_pet_time))
+                await db.execute(
+                    "INSERT OR IGNORE INTO economy_migration_log (user_id, guild_id) VALUES (?, ?)",
+                    (user_id, ctx.guild.id)
+                )
+
             await db.commit()
 
-            async with db.execute(
-                "SELECT COUNT(*) FROM user_balances WHERE guild_id = ?", (ctx.guild.id,)
-            ) as cur:
-                migrated = (await cur.fetchone())[0]
-
         await ctx.send(
-            f"✅ Migration complete! **{migrated}** user records copied into this server's economy.\n"
-            f"Run `!migrateeconomy` again at any time — duplicate entries are safely skipped."
+            f"✅ Migration complete! **{len(rows)}** user records merged into this server's economy. "
+            f"Users who earned currency recently had their old balance added on top."
         )
 
     @commands.command(name="dbcheck")
