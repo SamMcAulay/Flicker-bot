@@ -94,6 +94,39 @@ class Admin(commands.Cog):
         embed.set_footer(text="User Stardust and Chips balances were not affected.")
         await ctx.send(embed=embed)
 
+    @commands.command(name="migrateeconomy")
+    async def migrate_economy(self, ctx):
+        """One-time migration: copies old global balances into this server's economy."""
+        import aiosqlite
+        async with aiosqlite.connect(database.DB_NAME) as db:
+            # Check old table has data
+            async with db.execute("SELECT COUNT(*) FROM users WHERE balance > 0 OR chips > 0") as cur:
+                count = (await cur.fetchone())[0]
+
+            if count == 0:
+                return await ctx.send("ℹ️ Nothing to migrate — the old users table is empty.")
+
+            # Copy every row that has a non-zero balance or chips into user_balances for this guild.
+            # INSERT OR IGNORE so re-running is safe and won't overwrite existing per-server rows.
+            await db.execute("""
+                INSERT OR IGNORE INTO user_balances (user_id, guild_id, balance, chips, pet_streak, last_pet_time)
+                SELECT user_id, ?, balance, chips,
+                       COALESCE(pet_streak, 0), COALESCE(last_pet_time, 0)
+                FROM users
+                WHERE balance > 0 OR chips > 0
+            """, (ctx.guild.id,))
+            await db.commit()
+
+            async with db.execute(
+                "SELECT COUNT(*) FROM user_balances WHERE guild_id = ?", (ctx.guild.id,)
+            ) as cur:
+                migrated = (await cur.fetchone())[0]
+
+        await ctx.send(
+            f"✅ Migration complete! **{migrated}** user records copied into this server's economy.\n"
+            f"Run `!migrateeconomy` again at any time — duplicate entries are safely skipped."
+        )
+
     @commands.command(name="dbcheck")
     async def dbcheck(self, ctx):
         """Debug: test whether user_game_stats table works end-to-end."""
