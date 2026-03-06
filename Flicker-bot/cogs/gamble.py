@@ -64,6 +64,7 @@ class BlackjackView(discord.ui.View):
         super().__init__(timeout=30)
         self.cog = cog
         self.ctx = ctx
+        self.guild_id = ctx.guild.id
         self.bet = bet
         self.deck = deck
         self.player_hand = player_hand
@@ -139,7 +140,7 @@ class BlackjackView(discord.ui.View):
             result, color, winnings = "❌ Dealer wins.", discord.Color.red(), 0
 
         if winnings:
-            await update_chips(self.ctx.author.id, winnings)
+            await update_chips(self.ctx.author.id, self.guild_id, winnings)
 
         if self.track_stats:
             await increment_stat("chips_wagered", self.bet)
@@ -188,13 +189,13 @@ class BlackjackView(discord.ui.View):
             return await interaction.response.send_message(
                 "Not your game!", ephemeral=True
             )
-        chips = await get_chips(self.ctx.author.id)
+        chips = await get_chips(self.ctx.author.id, self.guild_id)
         if chips < self.bet:
             return await interaction.response.send_message(
                 f"❌ Not enough Chips to double! (Need {self.bet:,} more)",
                 ephemeral=True,
             )
-        await update_chips(self.ctx.author.id, -self.bet)
+        await update_chips(self.ctx.author.id, self.guild_id, -self.bet)
         self.bet *= 2
         self.player_hand.append(self.deck.pop())
         await self.resolve(interaction)
@@ -207,7 +208,7 @@ class BlackjackView(discord.ui.View):
                 await self.message.edit(view=self)
             except Exception:
                 pass
-        await update_chips(self.ctx.author.id, self.bet)
+        await update_chips(self.ctx.author.id, self.guild_id, self.bet)
         if self.track_stats:
             await increment_stat("chips_wagered", self.bet)
         await record_user_game(self.ctx.author.id, "blackjack", self.bet)
@@ -228,6 +229,7 @@ class HiloView(discord.ui.View):
         super().__init__(timeout=30)
         self.cog = cog
         self.ctx = ctx
+        self.guild_id = ctx.guild.id
         self.bet = bet
         self.deck = deck
         self.current_card = current_card
@@ -323,7 +325,7 @@ class HiloView(discord.ui.View):
         for child in self.children:
             child.disabled = True
         payout = int(self.bet * self.multiplier())
-        await update_chips(self.ctx.author.id, payout)
+        await update_chips(self.ctx.author.id, self.guild_id, payout)
         if self.track_stats:
             await increment_stat("chips_wagered", self.bet)
             await increment_stat("chips_earnt", payout - self.bet)
@@ -368,13 +370,13 @@ class HiloView(discord.ui.View):
                 pass
         if self.streak > 0:
             payout = int(self.bet * self.multiplier())
-            await update_chips(self.ctx.author.id, payout)
+            await update_chips(self.ctx.author.id, self.guild_id, payout)
             if self.track_stats:
                 await increment_stat("chips_wagered", self.bet)
                 await increment_stat("chips_earnt", payout - self.bet)
             await record_user_game(self.ctx.author.id, "hilo", self.bet, earnt=payout - self.bet, biggest_win=payout - self.bet)
         else:
-            await update_chips(self.ctx.author.id, self.bet)
+            await update_chips(self.ctx.author.id, self.guild_id, self.bet)
             if self.track_stats:
                 await increment_stat("chips_wagered", self.bet)
             await record_user_game(self.ctx.author.id, "hilo", self.bet)
@@ -386,6 +388,7 @@ class WarpView(discord.ui.View):
         super().__init__(timeout=30)
         self.cog = cog
         self.ctx = ctx
+        self.guild_id = ctx.guild.id
         self.bet = bet
         self.track_stats = track_stats
         self.warp_step = warp_step
@@ -464,7 +467,7 @@ class WarpView(discord.ui.View):
             child.disabled = True
 
         payout = int(self.bet * self.multiplier)
-        await update_chips(self.ctx.author.id, payout)
+        await update_chips(self.ctx.author.id, self.guild_id, payout)
         if self.track_stats:
             await increment_stat("chips_wagered", self.bet)
             await increment_stat("chips_earnt", payout - self.bet)
@@ -488,13 +491,13 @@ class WarpView(discord.ui.View):
                 pass
         if self.jumps > 0:
             payout = int(self.bet * self.multiplier)
-            await update_chips(self.ctx.author.id, payout)
+            await update_chips(self.ctx.author.id, self.guild_id, payout)
             if self.track_stats:
                 await increment_stat("chips_wagered", self.bet)
                 await increment_stat("chips_earnt", payout - self.bet)
             await record_user_game(self.ctx.author.id, "warp", self.bet, earnt=payout - self.bet, biggest_win=payout - self.bet)
         else:
-            await update_chips(self.ctx.author.id, self.bet)
+            await update_chips(self.ctx.author.id, self.guild_id, self.bet)
             if self.track_stats:
                 await increment_stat("chips_wagered", self.bet)
             await record_user_game(self.ctx.author.id, "warp", self.bet)
@@ -508,7 +511,7 @@ class Gamble(commands.Cog):
         self.boss_id = 838827787174543380
 
     async def get_bet_amount(self, ctx, amount_str: str) -> int:
-        chips = await get_chips(ctx.author.id)
+        chips = await get_chips(ctx.author.id, ctx.guild.id)
         if amount_str.lower() in ["all", "max"]:
             if chips <= 0:
                 await ctx.send("❌ Your chip stack is empty!")
@@ -540,14 +543,14 @@ class Gamble(commands.Cog):
         if bet == -1:
             return ctx.command.reset_cooldown(ctx)
 
-        chips = await get_chips(ctx.author.id)
+        chips = await get_chips(ctx.author.id, ctx.guild.id)
         if chips < bet:
             ctx.command.reset_cooldown(ctx)
             return await ctx.send(
                 f"❌ You don't have enough Chips! (Balance: {chips:,})"
             )
 
-        await update_chips(ctx.author.id, -bet)
+        await update_chips(ctx.author.id, ctx.guild.id, -bet)
         view = WarpView(self, ctx, bet, track_stats=(ctx.author.id != self.boss_id), warp_step=warp_step)
         embed = discord.Embed(
             title="🚀 Hyperwarp Drive",
@@ -573,7 +576,7 @@ class Gamble(commands.Cog):
         if bet == -1:
             return ctx.command.reset_cooldown(ctx)
 
-        chips = await get_chips(ctx.author.id)
+        chips = await get_chips(ctx.author.id, ctx.guild.id)
         if chips < bet:
             ctx.command.reset_cooldown(ctx)
             return await ctx.send(
@@ -589,7 +592,7 @@ class Gamble(commands.Cog):
             ctx.command.reset_cooldown(ctx)
             return await ctx.send("❌ Please choose Heads (h) or Tails (t).")
 
-        await update_chips(ctx.author.id, -bet)
+        await update_chips(ctx.author.id, ctx.guild.id, -bet)
 
         embed = discord.Embed(color=discord.Color.gold())
         embed.description = f"**{ctx.author.display_name}** spent **{bet:,}** Chips and chose **{user_guess}**.\n\nThe coin spins... {ANIM_COIN}"
@@ -608,7 +611,7 @@ class Gamble(commands.Cog):
         result_icon = STATIC_HEADS if result == "heads" else STATIC_TAILS
         if user_guess == result:
             winnings = int(bet * cf_multiplier)
-            await update_chips(ctx.author.id, winnings)
+            await update_chips(ctx.author.id, ctx.guild.id, winnings)
             if ctx.author.id != self.boss_id:
                 await increment_stat("chips_wagered", bet)
                 await increment_stat("chips_earnt", winnings - bet)
@@ -647,14 +650,14 @@ class Gamble(commands.Cog):
         if bet == -1:
             return ctx.command.reset_cooldown(ctx)
 
-        chips = await get_chips(ctx.author.id)
+        chips = await get_chips(ctx.author.id, ctx.guild.id)
         if chips < bet:
             ctx.command.reset_cooldown(ctx)
             return await ctx.send(
                 f"❌ You don't have enough Chips! (Balance: {chips:,})"
             )
 
-        await update_chips(ctx.author.id, -bet)
+        await update_chips(ctx.author.id, ctx.guild.id, -bet)
         chance = random.random()
 
         if ctx.author.id == self.boss_id:
@@ -710,7 +713,7 @@ class Gamble(commands.Cog):
         )
         if multiplier > 0:
             winnings = bet * multiplier
-            await update_chips(ctx.author.id, winnings)
+            await update_chips(ctx.author.id, ctx.guild.id, winnings)
             if ctx.author.id != self.boss_id:
                 await increment_stat("chips_wagered", bet)
                 await increment_stat("chips_earnt", winnings - bet)
@@ -750,14 +753,14 @@ class Gamble(commands.Cog):
         if bet == -1:
             return ctx.command.reset_cooldown(ctx)
 
-        chips = await get_chips(ctx.author.id)
+        chips = await get_chips(ctx.author.id, ctx.guild.id)
         if chips < bet:
             ctx.command.reset_cooldown(ctx)
             return await ctx.send(
                 f"❌ You don't have enough Chips! (Balance: {chips:,})"
             )
 
-        await update_chips(ctx.author.id, -bet)
+        await update_chips(ctx.author.id, ctx.guild.id, -bet)
         deck = new_deck()
         random.shuffle(deck)
         player_hand = [deck.pop(), deck.pop()]
@@ -765,7 +768,7 @@ class Gamble(commands.Cog):
 
         if hand_value(player_hand) == 21:
             payout = int(bet * bj_natural_mult)
-            await update_chips(ctx.author.id, payout)
+            await update_chips(ctx.author.id, ctx.guild.id, payout)
             if ctx.author.id != self.boss_id:
                 await increment_stat("chips_wagered", bet)
                 await increment_stat("chips_earnt", payout - bet)
@@ -806,14 +809,14 @@ class Gamble(commands.Cog):
         if bet == -1:
             return ctx.command.reset_cooldown(ctx)
 
-        chips = await get_chips(ctx.author.id)
+        chips = await get_chips(ctx.author.id, ctx.guild.id)
         if chips < bet:
             ctx.command.reset_cooldown(ctx)
             return await ctx.send(
                 f"❌ You don't have enough Chips! (Balance: {chips:,})"
             )
 
-        await update_chips(ctx.author.id, -bet)
+        await update_chips(ctx.author.id, ctx.guild.id, -bet)
         deck = new_deck()
         random.shuffle(deck)
         current_card = deck.pop()
@@ -848,7 +851,7 @@ class Gamble(commands.Cog):
         if bet == -1:
             return ctx.command.reset_cooldown(ctx)
 
-        chips = await get_chips(ctx.author.id)
+        chips = await get_chips(ctx.author.id, ctx.guild.id)
         if chips < bet:
             ctx.command.reset_cooldown(ctx)
             return await ctx.send(
@@ -863,7 +866,7 @@ class Gamble(commands.Cog):
                 "❌ Bet must be `red`, `black`, `odd`, `even`, or a number 0–36."
             )
 
-        await update_chips(ctx.author.id, -bet)
+        await update_chips(ctx.author.id, ctx.guild.id, -bet)
 
         result = random.randint(0, 36)
         if ctx.author.id == self.boss_id and bet_type.isdigit():
@@ -898,7 +901,7 @@ class Gamble(commands.Cog):
         result_line = f"The wheel landed on **{result_color} {result}**!"
         if won:
             winnings = int(bet * multiplier)
-            await update_chips(ctx.author.id, winnings)
+            await update_chips(ctx.author.id, ctx.guild.id, winnings)
             if ctx.author.id != self.boss_id:
                 await increment_stat("chips_wagered", bet)
                 await increment_stat("chips_earnt", winnings - bet)

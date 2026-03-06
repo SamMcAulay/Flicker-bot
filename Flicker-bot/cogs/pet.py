@@ -23,13 +23,12 @@ class Pet(commands.Cog):
     @commands.cooldown(1, 3600, commands.BucketType.user)
     async def pet_flicker(self, ctx):
         """Give Flicker a pet once an hour for Stardust — keep your streak up for bigger rewards!"""
+        if not ctx.guild:
+            return await ctx.send("❌ This command can only be used in a server.")
         now = time.time()
         base_reward = random.randint(1, 10)
 
-        streak, last_pet_time = await get_pet_data(ctx.author.id)
-
-        # Ensure the user row exists before we UPDATE it
-        await update_balance(ctx.author.id, 0)
+        streak, last_pet_time = await get_pet_data(ctx.author.id, ctx.guild.id)
 
         if last_pet_time == 0:
             # First ever pet
@@ -55,8 +54,8 @@ class Pet(commands.Cog):
             milestone_reward = milestone[0]
             total_reward += milestone_reward
 
-        await update_balance(ctx.author.id, total_reward)
-        await update_pet_data(ctx.author.id, new_streak, now)
+        await update_balance(ctx.author.id, ctx.guild.id, total_reward)
+        await update_pet_data(ctx.author.id, ctx.guild.id, new_streak, now)
         await increment_stat("pet_count")
 
         # Build embed

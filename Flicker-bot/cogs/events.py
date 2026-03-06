@@ -162,10 +162,11 @@ class Events(commands.Cog):
             self.drop_channel = None
             self.drop_caught_ids = set()
 
+        guild_id = channel.guild.id if channel.guild else 0
         if catchers:
             for i, user in enumerate(catchers):
                 reward = rewards[i]
-                await update_balance(user.id, reward)
+                await update_balance(user.id, guild_id, reward)
                 await increment_stat("stardust_earned", reward)
                 await increment_stat("games_correct")
             await channel.send("🤲 **The dust has settled!**")
@@ -184,9 +185,10 @@ class Events(commands.Cog):
         embed.set_footer(text=f"You have 10 seconds! Reward: {reward} Stardust")
         await channel.send(embed=embed)
         def check(m): return m.channel == channel and not m.author.bot and m.content == target_code
+        guild_id = channel.guild.id if channel.guild else 0
         try:
             winner = await self.bot.wait_for('message', check=check, timeout=10.0)
-            await update_balance(winner.author.id, reward)
+            await update_balance(winner.author.id, guild_id, reward)
             await increment_stat("stardust_earned", reward)
             await increment_stat("games_correct")
             await channel.send(f"🌟 **Caught it!** {winner.author.mention} snagged **{reward} Stardust**!")
@@ -206,9 +208,10 @@ class Events(commands.Cog):
         embed.set_footer(text=f"You have 12 seconds! Reward: {reward} Stardust")
         await channel.send(embed=embed)
         def check(m): return m.channel == channel and not m.author.bot and m.content == str(answer)
+        guild_id = channel.guild.id if channel.guild else 0
         try:
             winner = await self.bot.wait_for('message', check=check, timeout=12.0)
-            await update_balance(winner.author.id, reward)
+            await update_balance(winner.author.id, guild_id, reward)
             await increment_stat("stardust_earned", reward)
             await increment_stat("games_correct")
             await channel.send(f"🤖 **Thank you!** {winner.author.mention} solved the puzzle! **{reward} Stardust** for you!")
@@ -242,10 +245,11 @@ class Events(commands.Cog):
                     def check(m):
                         t = m.content.lower().strip()
                         return m.channel == channel and not m.author.bot and (t in valid_letters or normalize_answer(t) in normalized_opts)
+                    guild_id = channel.guild.id if channel.guild else 0
                     try:
                         msg = await self.bot.wait_for('message', check=check, timeout=30.0)
                         if msg.content.lower().strip() == correct_let.lower() or normalize_answer(msg.content) == normalize_answer(correct):
-                            await update_balance(msg.author.id, reward)
+                            await update_balance(msg.author.id, guild_id, reward)
                             await increment_stat("stardust_earned", reward)
                             await increment_stat("games_correct")
                             await channel.send(f"🎉 **Woohoo!** That's right! The answer was **{correct}**. {msg.author.mention} caught **{reward} Stardust**!")
@@ -285,9 +289,10 @@ class Events(commands.Cog):
         def check(m):
             return m.channel == channel and not m.author.bot and m.content.lower().strip() == word
 
+        guild_id = channel.guild.id if channel.guild else 0
         try:
             winner = await self.bot.wait_for("message", check=check, timeout=20.0)
-            await update_balance(winner.author.id, reward)
+            await update_balance(winner.author.id, guild_id, reward)
             await increment_stat("stardust_earned", reward)
             await increment_stat("games_correct")
             await channel.send(f"🌟 **Brilliant!** {winner.author.mention} unscrambled **{word}** and earned **{reward} Stardust**!")

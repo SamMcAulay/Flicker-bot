@@ -10,6 +10,18 @@ else:
 async def init_db():
     async with aiosqlite.connect(DB_NAME) as db:
         await db.execute("CREATE TABLE IF NOT EXISTS users (user_id INTEGER PRIMARY KEY, balance INTEGER DEFAULT 0)")
+        # Per-server economy table
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS user_balances (
+                user_id  INTEGER NOT NULL,
+                guild_id INTEGER NOT NULL,
+                balance  INTEGER DEFAULT 0,
+                chips    INTEGER DEFAULT 0,
+                pet_streak    INTEGER DEFAULT 0,
+                last_pet_time REAL    DEFAULT 0,
+                PRIMARY KEY (user_id, guild_id)
+            )
+        """)
         await db.execute("CREATE TABLE IF NOT EXISTS allowed_channels (channel_id INTEGER PRIMARY KEY)")
 
         await db.execute("""
@@ -132,72 +144,100 @@ async def init_db():
         except aiosqlite.OperationalError:
             pass
 
-# --- ECONOMY ---
-async def get_balance(user_id: int) -> int:
-    async with aiosqlite.connect(DB_NAME) as db:
-        async with db.execute("SELECT balance FROM users WHERE user_id = ?", (user_id,)) as cursor:
-            row = await cursor.fetchone()
-            if row: return row[0]
-            else:
-                await db.execute("INSERT INTO users (user_id, balance) VALUES (?, ?)", (user_id, 0))
-                await db.commit()
-                return 0
+# --- ECONOMY (per-server) ---
 
-async def update_balance(user_id: int, amount: int) -> int:
-    current = await get_balance(user_id)
-    new_balance = current + amount
+async def _ensure_user(db, user_id: int, guild_id: int) -> None:
+    await db.execute(
+        "INSERT OR IGNORE INTO user_balances (user_id, guild_id) VALUES (?, ?)",
+        (user_id, guild_id)
+    )
+
+async def get_balance(user_id: int, guild_id: int) -> int:
     async with aiosqlite.connect(DB_NAME) as db:
-        await db.execute("UPDATE users SET balance = ? WHERE user_id = ?", (new_balance, user_id))
+        await _ensure_user(db, user_id, guild_id)
         await db.commit()
-    return new_balance
-
-async def get_chips(user_id: int) -> int:
-    async with aiosqlite.connect(DB_NAME) as db:
-        async with db.execute("SELECT chips FROM users WHERE user_id = ?", (user_id,)) as cursor:
+        async with db.execute(
+            "SELECT balance FROM user_balances WHERE user_id = ? AND guild_id = ?",
+            (user_id, guild_id)
+        ) as cursor:
             row = await cursor.fetchone()
-            if row:
-                return row[0]
-            else:
-                await db.execute("INSERT OR IGNORE INTO users (user_id, balance, chips) VALUES (?, 0, 0)", (user_id,))
-                await db.commit()
-                return 0
+            return row[0] if row else 0
 
-async def update_chips(user_id: int, amount: int) -> int:
-    current = await get_chips(user_id)
-    new_chips = current + amount
+async def update_balance(user_id: int, guild_id: int, amount: int) -> int:
     async with aiosqlite.connect(DB_NAME) as db:
-        await db.execute("UPDATE users SET chips = ? WHERE user_id = ?", (new_chips, user_id))
+        await _ensure_user(db, user_id, guild_id)
+        await db.execute(
+            "UPDATE user_balances SET balance = MAX(0, balance + ?) WHERE user_id = ? AND guild_id = ?",
+            (amount, user_id, guild_id)
+        )
         await db.commit()
-    return new_chips
+        async with db.execute(
+            "SELECT balance FROM user_balances WHERE user_id = ? AND guild_id = ?",
+            (user_id, guild_id)
+        ) as cursor:
+            row = await cursor.fetchone()
+            return row[0] if row else 0
 
-async def get_top_users(limit: int = 10):
-    """Returns (top_stardust, top_chips) as two lists of (user_id, value)."""
+async def get_chips(user_id: int, guild_id: int) -> int:
+    async with aiosqlite.connect(DB_NAME) as db:
+        await _ensure_user(db, user_id, guild_id)
+        await db.commit()
+        async with db.execute(
+            "SELECT chips FROM user_balances WHERE user_id = ? AND guild_id = ?",
+            (user_id, guild_id)
+        ) as cursor:
+            row = await cursor.fetchone()
+            return row[0] if row else 0
+
+async def update_chips(user_id: int, guild_id: int, amount: int) -> int:
+    async with aiosqlite.connect(DB_NAME) as db:
+        await _ensure_user(db, user_id, guild_id)
+        await db.execute(
+            "UPDATE user_balances SET chips = MAX(0, chips + ?) WHERE user_id = ? AND guild_id = ?",
+            (amount, user_id, guild_id)
+        )
+        await db.commit()
+        async with db.execute(
+            "SELECT chips FROM user_balances WHERE user_id = ? AND guild_id = ?",
+            (user_id, guild_id)
+        ) as cursor:
+            row = await cursor.fetchone()
+            return row[0] if row else 0
+
+async def get_top_users(guild_id: int, limit: int = 10):
+    """Returns (top_stardust, top_chips) as two lists of (user_id, value) for a specific guild."""
     async with aiosqlite.connect(DB_NAME) as db:
         async with db.execute(
-            "SELECT user_id, balance FROM users WHERE balance > 0 ORDER BY balance DESC LIMIT ?", (limit,)
+            "SELECT user_id, balance FROM user_balances WHERE guild_id = ? AND balance > 0 ORDER BY balance DESC LIMIT ?",
+            (guild_id, limit)
         ) as cursor:
             top_stardust = await cursor.fetchall()
         async with db.execute(
-            "SELECT user_id, chips FROM users WHERE chips > 0 ORDER BY chips DESC LIMIT ?", (limit,)
+            "SELECT user_id, chips FROM user_balances WHERE guild_id = ? AND chips > 0 ORDER BY chips DESC LIMIT ?",
+            (guild_id, limit)
         ) as cursor:
             top_chips = await cursor.fetchall()
     return top_stardust, top_chips
 
-# --- PET STREAK ---
-async def get_pet_data(user_id: int) -> tuple:
+# --- PET STREAK (per-server) ---
+async def get_pet_data(user_id: int, guild_id: int) -> tuple:
     """Returns (pet_streak, last_pet_time)."""
     async with aiosqlite.connect(DB_NAME) as db:
+        await _ensure_user(db, user_id, guild_id)
+        await db.commit()
         async with db.execute(
-            "SELECT pet_streak, last_pet_time FROM users WHERE user_id = ?", (user_id,)
+            "SELECT pet_streak, last_pet_time FROM user_balances WHERE user_id = ? AND guild_id = ?",
+            (user_id, guild_id)
         ) as cursor:
             row = await cursor.fetchone()
             return row if row else (0, 0.0)
 
-async def update_pet_data(user_id: int, streak: int, last_pet_time: float) -> None:
+async def update_pet_data(user_id: int, guild_id: int, streak: int, last_pet_time: float) -> None:
     async with aiosqlite.connect(DB_NAME) as db:
+        await _ensure_user(db, user_id, guild_id)
         await db.execute(
-            "UPDATE users SET pet_streak = ?, last_pet_time = ? WHERE user_id = ?",
-            (streak, last_pet_time, user_id)
+            "UPDATE user_balances SET pet_streak = ?, last_pet_time = ? WHERE user_id = ? AND guild_id = ?",
+            (streak, last_pet_time, user_id, guild_id)
         )
         await db.commit()
 

@@ -4,11 +4,12 @@ from database import get_balance, update_balance, get_chips, update_chips, get_t
 
 
 class PayConfirmView(discord.ui.View):
-    def __init__(self, sender: discord.Member, receiver: discord.Member, amount: int):
+    def __init__(self, sender: discord.Member, receiver: discord.Member, amount: int, guild_id: int):
         super().__init__(timeout=60)
         self.sender = sender
         self.receiver = receiver
         self.amount = amount
+        self.guild_id = guild_id
         self.message = None
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
@@ -20,7 +21,7 @@ class PayConfirmView(discord.ui.View):
         return True
 
     async def on_timeout(self):
-        await update_balance(self.sender.id, self.amount)
+        await update_balance(self.sender.id, self.guild_id, self.amount)
 
         for child in self.children:
             child.disabled = True
@@ -41,7 +42,7 @@ class PayConfirmView(discord.ui.View):
     ):
         self.stop()
 
-        await update_balance(self.receiver.id, self.amount)
+        await update_balance(self.receiver.id, self.guild_id, self.amount)
 
         for child in self.children:
             child.disabled = True
@@ -59,7 +60,7 @@ class PayConfirmView(discord.ui.View):
     ):
         self.stop()
 
-        await update_balance(self.sender.id, self.amount)
+        await update_balance(self.sender.id, self.guild_id, self.amount)
 
         for child in self.children:
             child.disabled = True
@@ -83,12 +84,13 @@ class Economy(commands.Cog):
     @commands.command(name="balance", aliases=["bal", "wallet", "b"])
     async def balance(self, ctx):
         """Check your Stardust and Chips balance."""
-        if ctx.guild:
-            settings = await get_server_settings(ctx.guild.id)
-            if not settings["command_toggles"].get("balance", True):
-                return await ctx.send("❌ That command is disabled in this server.")
-        stardust = await get_balance(ctx.author.id)
-        chips = await get_chips(ctx.author.id)
+        if not ctx.guild:
+            return await ctx.send("❌ This command can only be used in a server.")
+        settings = await get_server_settings(ctx.guild.id)
+        if not settings["command_toggles"].get("balance", True):
+            return await ctx.send("❌ That command is disabled in this server.")
+        stardust = await get_balance(ctx.author.id, ctx.guild.id)
+        chips = await get_chips(ctx.author.id, ctx.guild.id)
 
         embed = discord.Embed(
             title=f"{ctx.author.display_name}'s Wallet",
@@ -102,7 +104,9 @@ class Economy(commands.Cog):
     @commands.has_permissions(administrator=True)
     async def add_money(self, ctx, member: discord.Member, amount: int):
         """Admin only: Add money to a user."""
-        new_bal = await update_balance(member.id, amount)
+        if not ctx.guild:
+            return await ctx.send("❌ This command can only be used in a server.")
+        new_bal = await update_balance(member.id, ctx.guild.id, amount)
         await ctx.send(
             f"💰 Added **{amount}** Stardust to {member.mention}. New balance: **{new_bal}**"
         )
@@ -116,10 +120,12 @@ class Economy(commands.Cog):
     @commands.has_permissions(administrator=True)
     async def chips_remove(self, ctx, member: discord.Member, amount: int):
         """Admin only: Remove chips from a user."""
+        if not ctx.guild:
+            return await ctx.send("❌ This command can only be used in a server.")
         if amount <= 0:
             return await ctx.send("❌ Please provide a positive number to remove.")
 
-        new_bal = await update_chips(member.id, -amount)
+        new_bal = await update_chips(member.id, ctx.guild.id, -amount)
         await ctx.send(
             f"📉 Removed **{amount:,}** Chips from {member.mention}. New balance: **{new_bal:,}**"
         )
@@ -127,11 +133,12 @@ class Economy(commands.Cog):
     @commands.command(name="buychips", aliases=["bc"])
     async def buy_chips(self, ctx, amount_str: str):
         """Convert Stardust into Chips. Rate: 1 Stardust = 50 Chips."""
-        if ctx.guild:
-            settings = await get_server_settings(ctx.guild.id)
-            if not settings["command_toggles"].get("buychips", True):
-                return await ctx.send("❌ That command is disabled in this server.")
-        balance = await get_balance(ctx.author.id)
+        if not ctx.guild:
+            return await ctx.send("❌ This command can only be used in a server.")
+        settings = await get_server_settings(ctx.guild.id)
+        if not settings["command_toggles"].get("buychips", True):
+            return await ctx.send("❌ That command is disabled in this server.")
+        balance = await get_balance(ctx.author.id, ctx.guild.id)
 
         if amount_str.lower() in ["all", "max"]:
             if balance <= 0:
@@ -151,11 +158,11 @@ class Economy(commands.Cog):
             )
 
         chips_gained = amount * 50
-        await update_balance(ctx.author.id, -amount)
+        await update_balance(ctx.author.id, ctx.guild.id, -amount)
         try:
-            new_chips = await update_chips(ctx.author.id, chips_gained)
+            new_chips = await update_chips(ctx.author.id, ctx.guild.id, chips_gained)
         except Exception:
-            await update_balance(ctx.author.id, amount)  # refund
+            await update_balance(ctx.author.id, ctx.guild.id, amount)  # refund
             return await ctx.send(
                 "❌ Something went wrong. Your Stardust has been refunded."
             )
@@ -178,7 +185,7 @@ class Economy(commands.Cog):
         settings = await get_server_settings(ctx.guild.id)
         if not settings["command_toggles"].get("top", True):
             return await ctx.send("❌ That command is disabled in this server.")
-        top_stardust, top_chips = await get_top_users(10)
+        top_stardust, top_chips = await get_top_users(ctx.guild.id, 10)
 
         def format_entries(entries):
             lines = []
@@ -207,10 +214,11 @@ class Economy(commands.Cog):
     @commands.command(name="pay", aliases=["transfer", "give"])
     async def pay(self, ctx, member: discord.Member, amount_str: str):
         """Send Stardust to another user! (Usage: !pay @user 100)"""
-        if ctx.guild:
-            settings = await get_server_settings(ctx.guild.id)
-            if not settings["command_toggles"].get("pay", True):
-                return await ctx.send("❌ That command is disabled in this server.")
+        if not ctx.guild:
+            return await ctx.send("❌ This command can only be used in a server.")
+        settings = await get_server_settings(ctx.guild.id)
+        if not settings["command_toggles"].get("pay", True):
+            return await ctx.send("❌ That command is disabled in this server.")
 
         if member.bot:
             return await ctx.send(
@@ -219,7 +227,7 @@ class Economy(commands.Cog):
         if member.id == ctx.author.id:
             return await ctx.send("❌ You cannot pay yourself!")
 
-        balance = await get_balance(ctx.author.id)
+        balance = await get_balance(ctx.author.id, ctx.guild.id)
         if amount_str.lower() in ["all", "max"]:
             if balance <= 0:
                 return await ctx.send("❌ Your wallet is empty!")
@@ -238,7 +246,7 @@ class Economy(commands.Cog):
                 f"❌ You don't have enough Stardust! (Balance: **{balance:,}**)"
             )
 
-        await update_balance(ctx.author.id, -amount)
+        await update_balance(ctx.author.id, ctx.guild.id, -amount)
 
         embed = discord.Embed(
             title="💸 Pending Payment...",
@@ -246,7 +254,7 @@ class Economy(commands.Cog):
             color=discord.Color.gold(),
         )
 
-        view = PayConfirmView(ctx.author, member, amount)
+        view = PayConfirmView(ctx.author, member, amount, ctx.guild.id)
         msg = await ctx.send(content=member.mention, embed=embed, view=view)
 
         view.message = msg

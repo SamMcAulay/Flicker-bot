@@ -163,20 +163,21 @@ class ShopView(discord.ui.View):
             )
 
         # Balance check and deduction for automatic currencies
+        guild_id = interaction.guild.id
         if currency == "stardust":
-            bal = await get_balance(user.id)
+            bal = await get_balance(user.id, guild_id)
             if bal < price:
                 return await interaction.response.send_message(
                     f"❌ You need **{price:,} Stardust** (you have {bal:,}).", ephemeral=True
                 )
-            await update_balance(user.id, -price)
+            await update_balance(user.id, guild_id, -price)
         elif currency == "chips":
-            bal = await get_chips(user.id)
+            bal = await get_chips(user.id, guild_id)
             if bal < price:
                 return await interaction.response.send_message(
                     f"❌ You need **{price:,} Chips** (you have {bal:,}).", ephemeral=True
                 )
-            await update_chips(user.id, -price)
+            await update_chips(user.id, guild_id, -price)
         # USD: no automatic deduction — goes straight to ticket
 
         await decrement_stock(message_id)
@@ -190,9 +191,9 @@ class ShopView(discord.ui.View):
                 )
             # Role missing — refund the user
             if currency == "stardust":
-                await update_balance(user.id, price)
+                await update_balance(user.id, guild_id, price)
             elif currency == "chips":
-                await update_chips(user.id, price)
+                await update_chips(user.id, guild_id, price)
             return await interaction.response.send_message(
                 "⚠️ Role no longer exists. Your payment has been refunded. Contact staff if needed.", ephemeral=True
             )
