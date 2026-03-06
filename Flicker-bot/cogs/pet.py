@@ -37,19 +37,19 @@ class Pet(commands.Cog):
         else:
             elapsed = now - last_pet_time
             if elapsed <= STREAK_WINDOW:
-                # On time — build streak
-                new_streak = min(streak + 1, STREAK_CAP)
+                # On time — build streak (uncapped, display grows indefinitely)
+                new_streak = streak + 1
             else:
                 # Late — decay then don't add
                 hours_late = (elapsed - STREAK_WINDOW) / DECAY_INTERVAL
                 decay = math.floor(hours_late)
                 new_streak = max(0, streak - decay)
 
-        streak_bonus = new_streak  # +1 Stardust per streak level
+        streak_bonus = min(new_streak, STREAK_CAP)  # bonus capped at 30
         total_reward = base_reward + streak_bonus
 
-        # Check for milestone (fires each time streak reaches the threshold)
-        milestone = MILESTONES.get(new_streak)
+        # Milestone fires only when streak just crossed the threshold (not on repeat visits)
+        milestone = MILESTONES.get(new_streak) if new_streak > streak else None
         milestone_reward = 0
         if milestone:
             milestone_reward = milestone[0]
