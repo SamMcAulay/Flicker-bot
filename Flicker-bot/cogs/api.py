@@ -4,6 +4,7 @@ import json
 import jwt
 from aiohttp import web, ClientSession
 from discord.ext import commands
+from discord.http import Route
 from database import (
     get_all_stats,
     get_server_settings,
@@ -417,7 +418,10 @@ class Api(commands.Cog):
 
         if http_fields:
             try:
-                await self.bot.http.edit_my_member(guild_id, **http_fields)
+                await self.bot.http.request(
+                    Route("PATCH", "/guilds/{guild_id}/members/@me", guild_id=guild_id),
+                    json=http_fields,
+                )
             except Exception as e:
                 errors.append(str(e))
 
