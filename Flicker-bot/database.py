@@ -80,6 +80,16 @@ async def init_db():
                 response_text TEXT NOT NULL
             )
         """)
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS response_groups (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                guild_id INTEGER NOT NULL,
+                name TEXT NOT NULL,
+                triggers TEXT NOT NULL,
+                responses TEXT NOT NULL,
+                enabled INTEGER DEFAULT 1
+            )
+        """)
         await db.commit()
 
         # Safe migration: add pet streak columns
@@ -107,6 +117,13 @@ async def init_db():
             await db.commit()
         except aiosqlite.OperationalError:
             pass  # Column already exists
+
+        # Safe migration: add chat_toggles column to server_settings
+        try:
+            await db.execute("ALTER TABLE server_settings ADD COLUMN chat_toggles TEXT DEFAULT '{}'")
+            await db.commit()
+        except aiosqlite.OperationalError:
+            pass
 
 # --- ECONOMY ---
 async def get_balance(user_id: int) -> int:
@@ -335,6 +352,7 @@ async def get_vc_config(guild_id: int):
 _DEFAULT_GAME_TOGGLES = {"coinflip": True, "slots": True, "blackjack": True, "hilo": True, "roulette": True, "warp": True}
 _DEFAULT_EVENT_TOGGLES = {"chat_drops": True, "trivia": True, "math": True, "fast_type": True, "word_scramble": True}
 _DEFAULT_COMMAND_TOGGLES = {"balance": True, "pay": True, "buychips": True, "top": True}
+_DEFAULT_CHAT_TOGGLES = {"greet": True, "bye": True, "thanks": True, "love": True, "kill": True, "trial": True, "fact": True}
 _DEFAULT_PAYOUT_OVERRIDES = {
     "slots_jackpot": 10,
     "hilo_step": 0.2,
@@ -351,7 +369,7 @@ async def get_server_settings(guild_id: int) -> dict:
     """Returns merged settings dict with defaults for any missing keys."""
     async with aiosqlite.connect(DB_NAME) as db:
         async with db.execute(
-            "SELECT command_toggles, game_toggles, event_toggles, payout_overrides FROM server_settings WHERE guild_id = ?",
+            "SELECT command_toggles, game_toggles, event_toggles, payout_overrides, chat_toggles FROM server_settings WHERE guild_id = ?",
             (guild_id,)
         ) as cursor:
             row = await cursor.fetchone()
@@ -361,12 +379,14 @@ async def get_server_settings(guild_id: int) -> dict:
             "game_toggles": dict(_DEFAULT_GAME_TOGGLES),
             "event_toggles": dict(_DEFAULT_EVENT_TOGGLES),
             "payout_overrides": dict(_DEFAULT_PAYOUT_OVERRIDES),
+            "chat_toggles": dict(_DEFAULT_CHAT_TOGGLES),
         }
     return {
-        "command_toggles": {**_DEFAULT_COMMAND_TOGGLES, **json.loads(row[0] or "{}")},
-        "game_toggles":    {**_DEFAULT_GAME_TOGGLES,    **json.loads(row[1] or "{}")},
-        "event_toggles":   {**_DEFAULT_EVENT_TOGGLES,   **json.loads(row[2] or "{}")},
+        "command_toggles":  {**_DEFAULT_COMMAND_TOGGLES,  **json.loads(row[0] or "{}")},
+        "game_toggles":     {**_DEFAULT_GAME_TOGGLES,     **json.loads(row[1] or "{}")},
+        "event_toggles":    {**_DEFAULT_EVENT_TOGGLES,    **json.loads(row[2] or "{}")},
         "payout_overrides": {**_DEFAULT_PAYOUT_OVERRIDES, **json.loads(row[3] or "{}")},
+        "chat_toggles":     {**_DEFAULT_CHAT_TOGGLES,     **json.loads(row[4] or "{}")},
     }
 
 
@@ -376,25 +396,28 @@ async def update_server_settings(
     game_toggles: dict = None,
     event_toggles: dict = None,
     payout_overrides: dict = None,
+    chat_toggles: dict = None,
 ) -> None:
     """Upsert server settings, merging provided fields over existing values."""
     current = await get_server_settings(guild_id)
-    new_ct = json.dumps({**current["command_toggles"], **(command_toggles or {})})
-    new_gt = json.dumps({**current["game_toggles"],    **(game_toggles or {})})
-    new_et = json.dumps({**current["event_toggles"],   **(event_toggles or {})})
-    new_po = json.dumps({**current["payout_overrides"], **(payout_overrides or {})})
+    new_ct  = json.dumps({**current["command_toggles"],  **(command_toggles  or {})})
+    new_gt  = json.dumps({**current["game_toggles"],     **(game_toggles     or {})})
+    new_et  = json.dumps({**current["event_toggles"],    **(event_toggles    or {})})
+    new_po  = json.dumps({**current["payout_overrides"], **(payout_overrides or {})})
+    new_cht = json.dumps({**current["chat_toggles"],     **(chat_toggles     or {})})
     async with aiosqlite.connect(DB_NAME) as db:
         await db.execute(
             """
-            INSERT INTO server_settings (guild_id, command_toggles, game_toggles, event_toggles, payout_overrides)
-            VALUES (?, ?, ?, ?, ?)
+            INSERT INTO server_settings (guild_id, command_toggles, game_toggles, event_toggles, payout_overrides, chat_toggles)
+            VALUES (?, ?, ?, ?, ?, ?)
             ON CONFLICT(guild_id) DO UPDATE SET
-                command_toggles = excluded.command_toggles,
-                game_toggles    = excluded.game_toggles,
-                event_toggles   = excluded.event_toggles,
-                payout_overrides = excluded.payout_overrides
+                command_toggles  = excluded.command_toggles,
+                game_toggles     = excluded.game_toggles,
+                event_toggles    = excluded.event_toggles,
+                payout_overrides = excluded.payout_overrides,
+                chat_toggles     = excluded.chat_toggles
             """,
-            (guild_id, new_ct, new_gt, new_et, new_po)
+            (guild_id, new_ct, new_gt, new_et, new_po, new_cht)
         )
         await db.commit()
 
@@ -424,4 +447,40 @@ async def add_custom_response(guild_id: int, trigger_words: str, response_text: 
 async def delete_custom_response(response_id: int) -> None:
     async with aiosqlite.connect(DB_NAME) as db:
         await db.execute("DELETE FROM custom_responses WHERE id = ?", (response_id,))
+        await db.commit()
+
+
+# --- RESPONSE GROUPS ---
+async def get_response_groups(guild_id: int) -> list:
+    """Returns list of (id, name, triggers_json, responses_json, enabled) for the guild."""
+    async with aiosqlite.connect(DB_NAME) as db:
+        async with db.execute(
+            "SELECT id, name, triggers, responses, enabled FROM response_groups WHERE guild_id = ? ORDER BY id",
+            (guild_id,)
+        ) as cursor:
+            return await cursor.fetchall()
+
+
+async def add_response_group(guild_id: int, name: str, triggers: list, responses: list) -> int:
+    async with aiosqlite.connect(DB_NAME) as db:
+        cursor = await db.execute(
+            "INSERT INTO response_groups (guild_id, name, triggers, responses, enabled) VALUES (?, ?, ?, ?, 1)",
+            (guild_id, name, json.dumps(triggers), json.dumps(responses))
+        )
+        await db.commit()
+        return cursor.lastrowid
+
+
+async def set_response_group_enabled(group_id: int, enabled: bool) -> None:
+    async with aiosqlite.connect(DB_NAME) as db:
+        await db.execute(
+            "UPDATE response_groups SET enabled = ? WHERE id = ?",
+            (1 if enabled else 0, group_id)
+        )
+        await db.commit()
+
+
+async def delete_response_group(group_id: int) -> None:
+    async with aiosqlite.connect(DB_NAME) as db:
+        await db.execute("DELETE FROM response_groups WHERE id = ?", (group_id,))
         await db.commit()

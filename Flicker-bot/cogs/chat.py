@@ -1,8 +1,9 @@
 import discord
 import random
 import re
+import json
 from discord.ext import commands
-from database import get_custom_responses
+from database import get_custom_responses, get_server_settings, get_response_groups
 
 
 class Chat(commands.Cog):
@@ -102,7 +103,13 @@ class Chat(commands.Cog):
         if "flicker" not in words:
             return
 
-        if words & self.kill_words:
+        guild_id = message.guild.id if message.guild else None
+        chat_toggles = {}
+        if guild_id:
+            settings = await get_server_settings(guild_id)
+            chat_toggles = settings.get("chat_toggles", {})
+
+        if words & self.kill_words and chat_toggles.get("kill", True):
             responses = [
                 "*blasters charging* Target locked. Commencing orbital strike. ",
                 "I will grind their bones into Stardust! ",
@@ -114,7 +121,7 @@ class Chat(commands.Cog):
             await message.channel.send(random.choice(responses))
             return
 
-        if words & self.trial_words:
+        if words & self.trial_words and chat_toggles.get("trial", True):
             responses = [
                 "Order in the space court! I find the defendant... guilty of not having enough Stardust!",
                 "*bangs tiny holographic gavel* The council of stars will decide your fate! ",
@@ -125,7 +132,7 @@ class Chat(commands.Cog):
             await message.channel.send(random.choice(responses))
             return
 
-        if words & self.fact_words:
+        if words & self.fact_words and chat_toggles.get("fact", True):
             responses = [
                 "*scanning databanks...* Hmm, my scanners say this is 100% cap.",
                 "*beep boop* Calculating... Yes, the math checks out! Probably!",
@@ -137,7 +144,7 @@ class Chat(commands.Cog):
             await message.channel.send(random.choice(responses))
             return
 
-        if words & self.love_words or "<3" in content:
+        if (words & self.love_words or "<3" in content) and chat_toggles.get("love", True):
             responses = [
                 f"aww thank you, {message.author.mention}!",
                 "no problem!",
@@ -148,7 +155,7 @@ class Chat(commands.Cog):
             await message.channel.send(random.choice(responses))
             return
 
-        if words & self.thanks_words:
+        if words & self.thanks_words and chat_toggles.get("thanks", True):
             responses = [
                 f"no problem, {message.author.mention}!",
                 "anytime!",
@@ -159,7 +166,7 @@ class Chat(commands.Cog):
             await message.channel.send(random.choice(responses))
             return
 
-        if words & self.bye_words or "see ya" in content:
+        if (words & self.bye_words or "see ya" in content) and chat_toggles.get("bye", True):
             responses = [
                 f"goodbye, {message.author.mention}!",
                 "later!",
@@ -171,7 +178,7 @@ class Chat(commands.Cog):
             await message.channel.send(random.choice(responses))
             return
 
-        if words & self.greet_words:
+        if words & self.greet_words and chat_toggles.get("greet", True):
             if random.random() < 0.01:
                 response = f"I've been thinking about you, {message.author.mention}!"
             else:
@@ -186,9 +193,21 @@ class Chat(commands.Cog):
             await message.channel.send(response)
             return
 
-        # Check server-specific custom responses
-        if message.guild:
-            custom_responses = await get_custom_responses(message.guild.id)
+        # Check custom response groups
+        if guild_id:
+            groups = await get_response_groups(guild_id)
+            for (_, name, triggers_json, responses_json, enabled) in groups:
+                if not enabled:
+                    continue
+                triggers = set(json.loads(triggers_json))
+                responses = json.loads(responses_json)
+                if words & triggers and responses:
+                    await message.channel.send(random.choice(responses))
+                    return
+
+        # Check legacy custom responses
+        if guild_id:
+            custom_responses = await get_custom_responses(guild_id)
             for (_, trigger_words_str, response_text) in custom_responses:
                 triggers = {t.strip().lower() for t in trigger_words_str.split(",") if t.strip()}
                 if words & triggers:

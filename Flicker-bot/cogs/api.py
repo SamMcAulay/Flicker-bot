@@ -11,7 +11,35 @@ from database import (
     get_custom_responses,
     add_custom_response,
     delete_custom_response,
+    get_response_groups,
+    add_response_group,
+    set_response_group_enabled,
+    delete_response_group,
 )
+
+BUILTIN_GROUPS = [
+    {"key": "greet", "name": "Greetings", "icon": "👋",
+     "triggers": ["hi", "hello", "hey", "heyy", "yo", "sup", "greetings", "howdy", "hiya", "hola", "bonjour", "heya"],
+     "responses": ["hey there @user!", "hi @user!", "good to see you, @user!", "beep boop! hello!", "greetings, friend!"]},
+    {"key": "bye", "name": "Farewells", "icon": "✈️",
+     "triggers": ["bye", "goodbye", "cya", "later", "night", "gn", "peace", "adios", "farewell", "sleep"],
+     "responses": ["goodbye, @user!", "later!", "have a good day, @user!", "toodles!", "catch you on the flip side!", "sleep well!"]},
+    {"key": "thanks", "name": "Thanks", "icon": "🙏",
+     "triggers": ["thank", "thanks", "thx", "ty", "tysm", "appreciate", "cheers", "gracias"],
+     "responses": ["no problem, @user!", "anytime!", "of course!", "happy to help, @user!", "you are very welcome!"]},
+    {"key": "love", "name": "Love & Compliments", "icon": "❤️",
+     "triggers": ["ily", "love", "luv", "heart", "adore", "wub", "cute", "sweet"],
+     "responses": ["aww thank you, @user!", "you're sweet, @user!", "right back at you! ❤️", "aww shucks! ❤️"]},
+    {"key": "kill", "name": "Threats", "icon": "⚔️",
+     "triggers": ["kill", "destroy", "eliminate", "murder", "attack", "smite", "stab", "shoot", "beat", "fight"],
+     "responses": ["*blasters charging* Target locked.", "I will grind their bones into Stardust!", "*error 404* Mercy module not found."]},
+    {"key": "trial", "name": "Legal / Police", "icon": "⚖️",
+     "triggers": ["trial", "arrest", "jail", "judge", "court", "prison", "sue", "lawyer", "cop", "police", "guilty"],
+     "responses": ["Order in the space court!", "*bangs tiny holographic gavel* The council of stars will decide your fate!", "WEE WOO WEE WOO Space police Flicker is on the case!"]},
+    {"key": "fact", "name": "Fact Check", "icon": "🔍",
+     "triggers": ["fact", "verify", "true", "false", "real", "fake", "source"],
+     "responses": ["*scanning databanks...* 100% cap.", "*beep boop* The math checks out! Probably!", "My sources say 'maybe'."]},
+]
 
 DISCORD_API = "https://discord.com/api/v10"
 MANAGE_GUILD = 0x20
@@ -94,6 +122,11 @@ class Api(commands.Cog):
         app.router.add_post("/api/custom-responses/{guild_id}", self.handle_add_response)
         app.router.add_route("OPTIONS", "/api/custom-responses/{guild_id}/{response_id}", self.handle_preflight)
         app.router.add_delete("/api/custom-responses/{guild_id}/{response_id}", self.handle_delete_response)
+        app.router.add_route("OPTIONS", "/api/response-groups/{guild_id}", self.handle_preflight)
+        app.router.add_post("/api/response-groups/{guild_id}", self.handle_add_group)
+        app.router.add_route("OPTIONS", "/api/response-groups/{guild_id}/{group_id}", self.handle_preflight)
+        app.router.add_patch("/api/response-groups/{guild_id}/{group_id}", self.handle_toggle_group)
+        app.router.add_delete("/api/response-groups/{guild_id}/{group_id}", self.handle_delete_group)
 
         # Guild list for the server selector
         app.router.add_route("OPTIONS", "/api/guilds", self.handle_preflight)
@@ -235,6 +268,7 @@ class Api(commands.Cog):
 
         settings = await get_server_settings(guild_id)
         custom_responses = await get_custom_responses(guild_id)
+        response_groups = await get_response_groups(guild_id)
 
         data = {
             **settings,
@@ -242,6 +276,11 @@ class Api(commands.Cog):
                 {"id": r[0], "trigger_words": r[1], "response_text": r[2]}
                 for r in custom_responses
             ],
+            "response_groups": [
+                {"id": r[0], "name": r[1], "triggers": r[2], "responses": r[3], "enabled": bool(r[4])}
+                for r in response_groups
+            ],
+            "builtin_groups": BUILTIN_GROUPS,
         }
         return web.json_response(data, headers=_get_cors_headers(request))
 
@@ -260,6 +299,7 @@ class Api(commands.Cog):
             game_toggles=body.get("game_toggles"),
             event_toggles=body.get("event_toggles"),
             payout_overrides=body.get("payout_overrides"),
+            chat_toggles=body.get("chat_toggles"),
         )
         return web.json_response({"ok": True}, headers=_get_cors_headers(request))
 
@@ -291,6 +331,42 @@ class Api(commands.Cog):
         _require_auth(request, guild_id)
         response_id = int(request.match_info["response_id"])
         await delete_custom_response(response_id)
+        return web.json_response({"ok": True}, headers=_get_cors_headers(request))
+
+    # ── Response Groups API ───────────────────────────────────────────────────
+
+    async def handle_add_group(self, request: web.Request):
+        guild_id = int(request.match_info["guild_id"])
+        _require_auth(request, guild_id)
+        try:
+            body = await request.json()
+        except Exception:
+            raise web.HTTPBadRequest(reason="Invalid JSON")
+        name = body.get("name", "").strip()
+        triggers = [t.strip().lower() for t in body.get("triggers", []) if str(t).strip()]
+        responses = [r.strip() for r in body.get("responses", []) if str(r).strip()]
+        if not name or not triggers or not responses:
+            raise web.HTTPBadRequest(reason="name, triggers, and responses are required")
+        new_id = await add_response_group(guild_id, name, triggers, responses)
+        return web.json_response({"ok": True, "id": new_id}, status=201, headers=_get_cors_headers(request))
+
+    async def handle_toggle_group(self, request: web.Request):
+        guild_id = int(request.match_info["guild_id"])
+        _require_auth(request, guild_id)
+        group_id = int(request.match_info["group_id"])
+        try:
+            body = await request.json()
+        except Exception:
+            raise web.HTTPBadRequest(reason="Invalid JSON")
+        enabled = bool(body.get("enabled", True))
+        await set_response_group_enabled(group_id, enabled)
+        return web.json_response({"ok": True}, headers=_get_cors_headers(request))
+
+    async def handle_delete_group(self, request: web.Request):
+        guild_id = int(request.match_info["guild_id"])
+        _require_auth(request, guild_id)
+        group_id = int(request.match_info["group_id"])
+        await delete_response_group(group_id)
         return web.json_response({"ok": True}, headers=_get_cors_headers(request))
 
 
