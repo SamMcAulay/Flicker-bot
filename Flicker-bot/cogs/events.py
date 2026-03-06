@@ -22,13 +22,28 @@ SCRAMBLE_WORDS = [
 class Events(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        self.is_event_active = False 
+        self.is_event_active = False
         self.last_event_time = 0
-        self.cooldown_seconds = 180 
+        self.cooldown_seconds = 180
+        self.drop_queue = None
+        self.drop_channel = None
+        self.drop_caught_ids = set()
 
     @commands.Cog.listener()
     async def on_message(self, message):
-        if message.author.bot or self.is_event_active:
+        if message.author.bot:
+            return
+
+        # Feed active drop events before the is_event_active guard
+        if (self.drop_queue is not None
+                and message.channel == self.drop_channel
+                and message.content.lower().strip() == "catch"
+                and message.author.id not in self.drop_caught_ids):
+            self.drop_caught_ids.add(message.author.id)
+            await self.drop_queue.put(message.author)
+            return
+
+        if self.is_event_active:
             return
 
         allowed_ids = await get_allowed_channels()
@@ -102,32 +117,25 @@ class Events(commands.Cog):
         await channel.send(embed=embed)
 
         catchers = []
-        caught_ids = set()
-        queue = asyncio.Queue()
+        self.drop_queue = asyncio.Queue()
+        self.drop_channel = channel
+        self.drop_caught_ids = set()
 
-        async def catch_listener(message):
-            if (message.channel == channel
-                    and not message.author.bot
-                    and message.content.lower().strip() == "catch"
-                    and message.author.id not in caught_ids
-                    and len(catchers) < 5):
-                caught_ids.add(message.author.id)
-                await queue.put(message.author)
-
-        self.bot.add_listener(catch_listener, 'on_message')
         try:
-            deadline = asyncio.get_running_loop().time() + 15.0
+            deadline = asyncio.get_event_loop().time() + 15.0
             while len(catchers) < 5:
-                remaining = deadline - asyncio.get_running_loop().time()
+                remaining = deadline - asyncio.get_event_loop().time()
                 if remaining <= 0:
                     break
                 try:
-                    user = await asyncio.wait_for(queue.get(), timeout=remaining)
+                    user = await asyncio.wait_for(self.drop_queue.get(), timeout=remaining)
                     catchers.append(user)
                 except asyncio.TimeoutError:
                     break
         finally:
-            self.bot.remove_listener(catch_listener, 'on_message')
+            self.drop_queue = None
+            self.drop_channel = None
+            self.drop_caught_ids = set()
 
         if catchers:
             lines = []
