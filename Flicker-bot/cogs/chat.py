@@ -224,6 +224,10 @@ class Chat(commands.Cog):
             ]
             await message.channel.send(random.choice(responses))
 
+    @commands.command(name="help")
+    async def help_command(self, ctx):
+        await ctx.send("Need help? Check out the Flicker guide here: https://flicker-bot.com/guide")
+
 
 async def setup(bot):
     await bot.add_cog(Chat(bot))
