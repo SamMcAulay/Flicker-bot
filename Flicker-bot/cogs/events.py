@@ -3,9 +3,14 @@ import random
 import asyncio
 import aiohttp
 import html
+import re
 import time
 from discord.ext import commands
 from database import update_balance, get_allowed_channels, increment_stat, get_server_settings
+
+
+def normalize_answer(text):
+    return re.sub(r'[^\w\s]', '', text.lower()).strip()
 
 SCRAMBLE_WORDS = [
     "nebula", "galaxy", "cosmos", "pulsar", "quasar", "meteor", "comet",
@@ -86,18 +91,44 @@ class Events(commands.Cog):
     # --- GAMES ---
 
     async def event_drop(self, channel):
-        reward = random.randint(1, 10)
-        embed = discord.Embed(title="✨ Ooh! Shiny!", description=f"Someone dropped a pouch of Stardust!\nType **catch** to pick it up!", color=discord.Color.magenta())
-        embed.set_footer(text=f"Reward: {reward} Stardust")
+        reward_ranges = [(10, 12), (8, 10), (6, 8), (4, 6), (1, 4)]
+        rewards = [random.randint(lo, hi) for lo, hi in reward_ranges]
+        embed = discord.Embed(
+            title="✨ Ooh! Shiny!",
+            description="Someone dropped a pouch of Stardust!\nType **catch** to pick it up! Up to **5** people can grab some!",
+            color=discord.Color.magenta()
+        )
+        embed.set_footer(text="Rewards decrease per catch: 10–12 · 8–10 · 6–8 · 4–6 · 1–4 Stardust | 15 seconds")
         await channel.send(embed=embed)
-        def check(m): return m.channel == channel and not m.author.bot and m.content.lower().strip() == "catch"
-        try:
-            winner = await self.bot.wait_for('message', check=check, timeout=15.0)
-            await update_balance(winner.author.id, reward)
-            await increment_stat("stardust_earned", reward)
-            await increment_stat("games_correct")
-            await channel.send(f"🤲 **Gotcha!** {winner.author.mention} caught **{reward} Stardust**!")
-        except asyncio.TimeoutError:
+
+        catchers = []
+        caught_ids = set()
+
+        def check(m):
+            return m.channel == channel and not m.author.bot and m.content.lower().strip() == "catch" and m.author.id not in caught_ids
+
+        deadline = asyncio.get_event_loop().time() + 15.0
+        while len(catchers) < 5:
+            remaining = deadline - asyncio.get_event_loop().time()
+            if remaining <= 0:
+                break
+            try:
+                msg = await self.bot.wait_for('message', check=check, timeout=remaining)
+                caught_ids.add(msg.author.id)
+                catchers.append(msg.author)
+            except asyncio.TimeoutError:
+                break
+
+        if catchers:
+            lines = []
+            for i, user in enumerate(catchers):
+                reward = rewards[i]
+                await update_balance(user.id, reward)
+                await increment_stat("stardust_earned", reward)
+                await increment_stat("games_correct")
+                lines.append(f"**#{i + 1}** {user.mention} — **{reward} Stardust**")
+            await channel.send("🤲 **The dust has settled!**\n" + "\n".join(lines))
+        else:
             await increment_stat("games_wrong")
             await channel.send("💨 **Poof!** The Stardust blew away in the cosmic wind.")
 
@@ -159,11 +190,14 @@ class Events(commands.Cog):
                     embed = discord.Embed(title="✨ A Little Star Told Me...", description=f"{question}\n\n{opts_text}\n*Make a wish and pick an answer!*", color=discord.Color.purple())
                     embed.set_footer(text=f"You have 30 seconds! Reward: {reward} Stardust")
                     await channel.send(embed=embed)
-                    valid_inputs = [x.lower() for x in ["A", "B", "C", "D"] + all_opts]
-                    def check(m): return m.channel == channel and not m.author.bot and m.content.lower().strip() in valid_inputs
+                    valid_letters = ["a", "b", "c", "d"]
+                    normalized_opts = [normalize_answer(o) for o in all_opts]
+                    def check(m):
+                        t = m.content.lower().strip()
+                        return m.channel == channel and not m.author.bot and (t in valid_letters or normalize_answer(t) in normalized_opts)
                     try:
                         msg = await self.bot.wait_for('message', check=check, timeout=30.0)
-                        if msg.content.lower().strip() in [correct_let.lower(), correct.lower()]:
+                        if msg.content.lower().strip() == correct_let.lower() or normalize_answer(msg.content) == normalize_answer(correct):
                             await update_balance(msg.author.id, reward)
                             await increment_stat("stardust_earned", reward)
                             await increment_stat("games_correct")
