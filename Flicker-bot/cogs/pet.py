@@ -7,12 +7,12 @@ from database import update_balance, increment_stat, get_pet_data, update_pet_da
 
 STREAK_CAP = 30
 STREAK_WINDOW = 4500       # 1h15m in seconds — upper bound for "on time"
-DECAY_INTERVAL = 3600      # lose 1 streak level per hour past the window
+DECAY_INTERVAL = 720       # lose 5 streak levels per hour past the window
 
 MILESTONES = {
-    7:  (25,  "🌙 **One Week Streak!**", "You've been visiting every hour! Flicker saved something special for you."),
-    14: (50,  "⭐ **Two Week Streak!**", "Two weeks of hourly visits — Flicker has fully imprinted on you."),
-    30: (100, "🌟 **Monthly Devotee!**", "Flicker's eternal favourite. This level of dedication deserves a mega reward."),
+    7:  (25,  "🌙 **Streak Milestone!**", "You've been visiting regularly! Flicker saved something special for you."),
+    14: (50,  "⭐ **Dedicated Visitor!**", "Consistent visits — Flicker has fully imprinted on you."),
+    30: (100, "🌟 **Devoted Companion!**", "Flicker's eternal favourite. This level of dedication deserves a mega reward."),
 }
 
 class Pet(commands.Cog):
