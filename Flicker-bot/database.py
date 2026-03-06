@@ -354,7 +354,12 @@ _DEFAULT_EVENT_TOGGLES = {"chat_drops": True, "trivia": True, "math": True, "fas
 _DEFAULT_COMMAND_TOGGLES = {"balance": True, "pay": True, "buychips": True, "top": True}
 _DEFAULT_CHAT_TOGGLES = {"greet": True, "bye": True, "thanks": True, "love": True, "kill": True, "trial": True, "fact": True}
 _DEFAULT_PAYOUT_OVERRIDES = {
-    "slots_jackpot": 10,
+    # Slots
+    "slots_jackpot":          10,
+    "slots_star_multiplier":  5,
+    "slots_fruit_multiplier": 3,
+    "slots_cherry_multiplier": 2,
+    # Other games
     "hilo_step": 0.2,
     "coinflip_multiplier": 2.0,
     "blackjack_win_multiplier": 2.0,
@@ -362,6 +367,16 @@ _DEFAULT_PAYOUT_OVERRIDES = {
     "roulette_color_multiplier": 1.9,
     "roulette_number_multiplier": 35.0,
     "warp_multiplier_step": 1.5,
+    # Event reward ranges
+    "drop_1_min": 10, "drop_1_max": 12,
+    "drop_2_min": 8,  "drop_2_max": 10,
+    "drop_3_min": 6,  "drop_3_max": 8,
+    "drop_4_min": 4,  "drop_4_max": 6,
+    "drop_5_min": 1,  "drop_5_max": 4,
+    "fast_type_min": 10,     "fast_type_max": 20,
+    "math_min": 20,          "math_max": 40,
+    "trivia_min": 50,        "trivia_max": 100,
+    "word_scramble_min": 15, "word_scramble_max": 30,
 }
 
 

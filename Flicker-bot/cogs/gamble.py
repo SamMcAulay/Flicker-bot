@@ -630,12 +630,19 @@ class Gamble(commands.Cog):
     async def slots(self, ctx, amount: str):
         """Play the Cosmic Chip Slots!"""
         slots_jackpot = 10
+        slots_star    = 5
+        slots_fruit   = 3
+        slots_cherry  = 2
         if ctx.guild:
             settings = await get_server_settings(ctx.guild.id)
             if not settings["game_toggles"].get("slots", True):
                 ctx.command.reset_cooldown(ctx)
                 return await ctx.send("❌ Slots are disabled in this server.")
-            slots_jackpot = int(settings["payout_overrides"].get("slots_jackpot", 10))
+            po = settings["payout_overrides"]
+            slots_jackpot = int(po.get("slots_jackpot", 10))
+            slots_star    = int(po.get("slots_star_multiplier", 5))
+            slots_fruit   = int(po.get("slots_fruit_multiplier", 3))
+            slots_cherry  = int(po.get("slots_cherry_multiplier", 2))
         bet = await self.get_bet_amount(ctx, amount)
         if bet == -1:
             return ctx.command.reset_cooldown(ctx)
@@ -654,12 +661,12 @@ class Gamble(commands.Cog):
             if chance < 0.05:
                 final_reels, multiplier = ["💎", "💎", "💎"], slots_jackpot
             elif chance < 0.15:
-                final_reels, multiplier = ["⭐", "⭐", "⭐"], 5
+                final_reels, multiplier = ["⭐", "⭐", "⭐"], slots_star
             elif chance < 0.35:
                 e = random.choice(["🍋", "🍉"])
-                final_reels, multiplier = [e, e, e], 3
+                final_reels, multiplier = [e, e, e], slots_fruit
             elif chance < 0.70:
-                final_reels, multiplier = ["🍒", "🍒", "🍒"], 2
+                final_reels, multiplier = ["🍒", "🍒", "🍒"], slots_cherry
             else:
                 final_reels, multiplier = (
                     [random.choice(self.slot_emojis) for _ in range(3)],
@@ -668,17 +675,15 @@ class Gamble(commands.Cog):
                 if final_reels[0] == final_reels[1] == final_reels[2]:
                     final_reels[2] = "🍒" if final_reels[0] != "🍒" else "🍋"
         else:
-            # Mathematical 80% Expected Value (RTP) Setup:
-            # (0.02*10) + (0.04*5) + (0.08*3) + (0.08*2) = 0.80 EV
             if chance < 0.02:
                 final_reels, multiplier = ["💎", "💎", "💎"], slots_jackpot  # 2%
             elif chance < 0.06:
-                final_reels, multiplier = ["⭐", "⭐", "⭐"], 5  # 4%
+                final_reels, multiplier = ["⭐", "⭐", "⭐"], slots_star  # 4%
             elif chance < 0.14:  # 8%
                 e = random.choice(["🍋", "🍉"])
-                final_reels, multiplier = [e, e, e], 3
+                final_reels, multiplier = [e, e, e], slots_fruit
             elif chance < 0.22:
-                final_reels, multiplier = ["🍒", "🍒", "🍒"], 2  # 8%
+                final_reels, multiplier = ["🍒", "🍒", "🍒"], slots_cherry  # 8%
             else:  # 78% Loss
                 final_reels, multiplier = (
                     [random.choice(self.slot_emojis) for _ in range(3)],

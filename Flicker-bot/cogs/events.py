@@ -106,7 +106,18 @@ class Events(commands.Cog):
     # --- GAMES ---
 
     async def event_drop(self, channel):
-        reward_ranges = [(10, 12), (8, 10), (6, 8), (4, 6), (1, 4)]
+        guild_id = channel.guild.id if channel.guild else None
+        po = {}
+        if guild_id:
+            settings = await get_server_settings(guild_id)
+            po = settings["payout_overrides"]
+        reward_ranges = [
+            (int(po.get("drop_1_min", 10)), int(po.get("drop_1_max", 12))),
+            (int(po.get("drop_2_min", 8)),  int(po.get("drop_2_max", 10))),
+            (int(po.get("drop_3_min", 6)),  int(po.get("drop_3_max", 8))),
+            (int(po.get("drop_4_min", 4)),  int(po.get("drop_4_max", 6))),
+            (int(po.get("drop_5_min", 1)),  int(po.get("drop_5_max", 4))),
+        ]
         rewards = [random.randint(lo, hi) for lo, hi in reward_ranges]
 
         def build_embed(catchers):
@@ -163,7 +174,9 @@ class Events(commands.Cog):
             await channel.send("💨 **Poof!** The Stardust blew away in the cosmic wind.")
 
     async def event_fast_type(self, channel):
-        reward = random.randint(10, 20)
+        guild_id = channel.guild.id if channel.guild else None
+        po = (await get_server_settings(guild_id))["payout_overrides"] if guild_id else {}
+        reward = random.randint(int(po.get("fast_type_min", 10)), int(po.get("fast_type_max", 20)))
         chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
         target_code = f"{''.join(random.choices(chars, k=3))}-{''.join(random.choices(chars, k=3))}"
         display_code = "\u200b".join(target_code)  # zero-width spaces prevent copy-paste on mobile
@@ -182,7 +195,9 @@ class Events(commands.Cog):
             await channel.send(f"💨 **Whoosh!** It flew away. The spell was `{target_code}`.")
 
     async def event_math(self, channel):
-        reward = random.randint(20, 40)
+        guild_id = channel.guild.id if channel.guild else None
+        po = (await get_server_settings(guild_id))["payout_overrides"] if guild_id else {}
+        reward = random.randint(int(po.get("math_min", 20)), int(po.get("math_max", 40)))
         a, b, c = random.randint(2, 9), random.randint(10, 20), random.randint(1, 50)
         op_type = random.choice(["mul_add", "sub_add"])
         if op_type == "mul_add": equation, answer = f"{a} × {b} + {c}", (a * b) + c
@@ -202,7 +217,9 @@ class Events(commands.Cog):
             await channel.send(f"💤 **I fell asleep counting...** The answer was **{answer}**.")
 
     async def event_trivia(self, channel):
-        reward = random.randint(50, 100)
+        guild_id = channel.guild.id if channel.guild else None
+        po = (await get_server_settings(guild_id))["payout_overrides"] if guild_id else {}
+        reward = random.randint(int(po.get("trivia_min", 50)), int(po.get("trivia_max", 100)))
         url = "https://opentdb.com/api.php?amount=1&category=17&type=multiple"
         async with aiohttp.ClientSession() as session:
             async with session.get(url) as response:
@@ -240,7 +257,9 @@ class Events(commands.Cog):
                         await channel.send(f"🌙 **The stars have faded.** The answer was **{correct}**.")
 
     async def event_word_scramble(self, channel):
-        reward = random.randint(15, 30)
+        guild_id = channel.guild.id if channel.guild else None
+        po = (await get_server_settings(guild_id))["payout_overrides"] if guild_id else {}
+        reward = random.randint(int(po.get("word_scramble_min", 15)), int(po.get("word_scramble_max", 30)))
         word = random.choice(SCRAMBLE_WORDS)
 
         # Scramble until different from original
