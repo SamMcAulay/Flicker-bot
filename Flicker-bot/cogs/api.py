@@ -1,7 +1,6 @@
 import os
 import time
 import json
-import base64
 import jwt
 from aiohttp import web, ClientSession
 from discord.ext import commands
@@ -276,13 +275,18 @@ class Api(commands.Cog):
         response_groups = await get_response_groups(guild_id)
 
         # Build bot profile from live guild data
-        bot_profile = {"nickname": "", "avatar_url": str(self.bot.user.display_avatar.url)}
+        avatar_url = ""
+        if self.bot.user:
+            av = self.bot.user.display_avatar
+            avatar_url = str(av.url) if av else ""
+        bot_profile = {"nickname": "", "avatar_url": avatar_url}
         guild = self.bot.get_guild(guild_id)
         if guild and guild.me:
             me = guild.me
             bot_profile["nickname"] = me.nick or ""
-            if me.guild_avatar:
-                bot_profile["avatar_url"] = str(me.guild_avatar.url)
+            guild_av = getattr(me, "guild_avatar", None)
+            if guild_av:
+                bot_profile["avatar_url"] = str(guild_av.url)
 
         data = {
             **settings,
@@ -395,39 +399,31 @@ class Api(commands.Cog):
         except Exception:
             raise web.HTTPBadRequest(reason="Invalid JSON")
 
-        guild = self.bot.get_guild(guild_id)
-        if not guild or not guild.me:
+        if not self.bot.get_guild(guild_id):
             raise web.HTTPNotFound(reason="Guild not found")
 
-        me = guild.me
         errors = []
+        http_fields = {}
 
-        # Update nickname
-        nickname = body.get("nickname")
-        if nickname is not None:
+        # Nickname — pass None to clear
+        if "nickname" in body:
+            nick = (body["nickname"] or "").strip()
+            http_fields["nick"] = nick if nick else None
+
+        # Avatar — frontend sends the full data URI ("data:image/png;base64,...")
+        # Discord API accepts this directly; pass None to revert to global avatar
+        if "avatar" in body:
+            http_fields["avatar"] = body["avatar"] or None
+
+        if http_fields:
             try:
-                await me.edit(nick=nickname or None)
+                await self.bot.http.edit_my_member(guild_id, **http_fields)
             except Exception as e:
-                errors.append(f"Nickname: {e}")
+                errors.append(str(e))
 
-        # Update guild avatar
-        avatar_data = body.get("avatar")
-        if avatar_data is not None:
-            try:
-                if avatar_data:
-                    # Expect a data URI: "data:image/png;base64,iVBOR..."
-                    _, encoded = avatar_data.split(",", 1)
-                    avatar_bytes = base64.b64decode(encoded)
-                    await me.edit(avatar=avatar_bytes)
-                else:
-                    await me.edit(avatar=None)  # reset to global
-            except Exception as e:
-                errors.append(f"Avatar: {e}")
-
-        # Update prefix
-        prefix = body.get("prefix")
-        if prefix is not None:
-            await update_server_settings(guild_id, prefix=prefix or "!")
+        # Prefix — saved to DB
+        if "prefix" in body:
+            await update_server_settings(guild_id, prefix=(body["prefix"] or "!").strip() or "!")
 
         if errors:
             return web.json_response(
