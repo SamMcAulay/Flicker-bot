@@ -108,15 +108,25 @@ class Events(commands.Cog):
     async def event_drop(self, channel):
         reward_ranges = [(10, 12), (8, 10), (6, 8), (4, 6), (1, 4)]
         rewards = [random.randint(lo, hi) for lo, hi in reward_ranges]
-        embed = discord.Embed(
-            title="✨ Ooh! Shiny!",
-            description="Someone dropped a pouch of Stardust!\nType **catch** to pick it up! Up to **5** people can grab some!",
-            color=discord.Color.magenta()
-        )
-        embed.set_footer(text="Rewards decrease per catch: 10–12 · 8–10 · 6–8 · 4–6 · 1–4 Stardust | 15 seconds")
-        await channel.send(embed=embed)
+
+        def build_embed(catchers):
+            slots = []
+            for i in range(5):
+                if i < len(catchers):
+                    slots.append(f"**#{i + 1}** {catchers[i].mention} — **{rewards[i]} ✨**")
+                else:
+                    slots.append(f"**#{i + 1}** {rewards[i]} ✨ — *unclaimed*")
+            embed = discord.Embed(
+                title="✨ Ooh! Shiny!",
+                description="Someone dropped a pouch of Stardust!\nType **catch** to pick it up!\n\n" + "\n".join(slots),
+                color=discord.Color.magenta()
+            )
+            embed.set_footer(text="15 seconds to catch!")
+            return embed
 
         catchers = []
+        msg = await channel.send(embed=build_embed(catchers))
+
         self.drop_queue = asyncio.Queue()
         self.drop_channel = channel
         self.drop_caught_ids = set()
@@ -130,6 +140,7 @@ class Events(commands.Cog):
                 try:
                     user = await asyncio.wait_for(self.drop_queue.get(), timeout=remaining)
                     catchers.append(user)
+                    await msg.edit(embed=build_embed(catchers))
                 except asyncio.TimeoutError:
                     break
         finally:
@@ -138,14 +149,12 @@ class Events(commands.Cog):
             self.drop_caught_ids = set()
 
         if catchers:
-            lines = []
             for i, user in enumerate(catchers):
                 reward = rewards[i]
                 await update_balance(user.id, reward)
                 await increment_stat("stardust_earned", reward)
                 await increment_stat("games_correct")
-                lines.append(f"**#{i + 1}** {user.mention} — **{reward} Stardust**")
-            await channel.send("🤲 **The dust has settled!**\n" + "\n".join(lines))
+            await channel.send("🤲 **The dust has settled!**")
         else:
             await increment_stat("games_wrong")
             await channel.send("💨 **Poof!** The Stardust blew away in the cosmic wind.")
