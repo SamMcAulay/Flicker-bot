@@ -10,7 +10,10 @@ from database import (
     get_all_stats,
     record_user_game,
     get_user_game_stats,
+    get_response_groups,
+    add_response_group,
 )
+from cogs.api import BUILTIN_GROUPS
 
 
 class Admin(commands.Cog):
@@ -117,6 +120,27 @@ class Admin(commands.Cog):
             await db.commit()
 
         await ctx.send(f"✅ Done — **{count}** users restored from the original data.")
+
+    @commands.command(name="seedbuiltins")
+    async def seed_builtins(self, ctx):
+        """Seeds the built-in response groups into this server's custom groups."""
+        existing = await get_response_groups(ctx.guild.id)
+        existing_names = {r[1] for r in existing}
+
+        seeded, skipped = [], []
+        for group in BUILTIN_GROUPS:
+            if group["name"] in existing_names:
+                skipped.append(group["name"])
+                continue
+            await add_response_group(ctx.guild.id, group["name"], group["triggers"], group["responses"])
+            seeded.append(group["name"])
+
+        lines = []
+        if seeded:
+            lines.append(f"✅ Seeded: {', '.join(seeded)}")
+        if skipped:
+            lines.append(f"⏭️ Already existed, skipped: {', '.join(skipped)}")
+        await ctx.send("\n".join(lines) or "Nothing to seed.")
 
     @commands.command(name="dbcheck")
     async def dbcheck(self, ctx):
