@@ -21,7 +21,7 @@ class Profile(commands.Cog):
 
     # ── !profile ──────────────────────────────────────────────────────────────
 
-    @commands.command(name="profile", aliases=["stats", "card"])
+    @commands.command(name="profile", aliases=["card"])
     async def profile(self, ctx, member: discord.Member = None):
         """View your profile or another member's profile."""
         settings = await get_server_settings(ctx.guild.id)
