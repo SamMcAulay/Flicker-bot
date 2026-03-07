@@ -51,7 +51,6 @@ class Profile(commands.Cog):
         embed.add_field(name="🎰 Chips",        value=f"{chips:,}",                       inline=True)
         embed.add_field(name="❤️ Reputation",   value=str(social["rep_count"]),           inline=True)
         embed.add_field(name="🔥 Daily Streak", value=f"{social['daily_streak']} days",   inline=True)
-        embed.add_field(name="⚙️ Times Worked", value=str(social["work_count"]),          inline=True)
         embed.add_field(name="🎲 Games Played", value=str(total_played),                  inline=True)
 
         if total_played:

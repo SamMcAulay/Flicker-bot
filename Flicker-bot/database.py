@@ -500,7 +500,7 @@ _DEFAULT_GAME_TOGGLES = {
 _DEFAULT_EVENT_TOGGLES = {"chat_drops": True, "trivia": True, "math": True, "fast_type": True, "word_scramble": True}
 _DEFAULT_COMMAND_TOGGLES = {
     "balance": True, "pay": True, "buychips": True, "top": True,
-    "daily": True, "work": True, "rob": True,
+    "daily": True, "rob": True,
     "profile": True, "rep": True, "poll": True, "giveaway": True,
 }
 _DEFAULT_CHAT_TOGGLES = {"greet": True, "bye": True, "thanks": True, "love": True, "kill": True, "trial": True, "fact": True}
@@ -514,7 +514,6 @@ ACHIEVEMENTS = {
     "rich_10000":     {"name": "Galaxy Brain",           "desc": "Hold 10,000 Stardust at once",    "icon": "🌌"},
     "chips_10000":    {"name": "High Roller",            "desc": "Hold 10,000 Chips at once",       "icon": "🎰"},
     "well_loved":     {"name": "Well Loved",             "desc": "Receive 5 reputation points",     "icon": "❤️"},
-    "hard_worker":    {"name": "Hard Worker",            "desc": "Use !work 25 times",              "icon": "⚙️"},
     "robber":         {"name": "Five Finger Discount",   "desc": "Successfully rob someone",        "icon": "🦝"},
     "gambler":        {"name": "Risk Taker",             "desc": "Wager Chips for the first time",  "icon": "🎲"},
 }
@@ -604,8 +603,6 @@ _DEFAULT_TEXT_OVERRIDES = {
     "daily_claim":       "✅ **Daily claimed!** You received **{reward} Stardust**. (Streak: {streak} 🔥)",
     "daily_cooldown":    "⏰ You already claimed your daily! Come back in **{hours}h {mins}m**.",
     "daily_streak_lost": "📅 Your streak was reset. You received **{reward} Stardust**. (New streak: 1 🔥)",
-    # Work
-    "work_cooldown":     "⚙️ You're still working! Come back in **{hours}h {mins}m**.",
     # Rob
     "rob_success":       "🦝 You snuck **{amount} Stardust** from {victim}!",
     "rob_fail":          "🚓 You tried to rob {victim} but got away empty-handed.",
@@ -642,9 +639,6 @@ _DEFAULT_PAYOUT_OVERRIDES = {
     "daily_streak_bonus": 5,
     "daily_streak_max": 30,
     "daily_cooldown_hours": 22,
-    # Work
-    "work_min": 10, "work_max": 25,
-    "work_cooldown_hours": 4,
     # Rob
     "rob_success_chance": 0.40,
     "rob_steal_min_pct": 0.10,
@@ -938,20 +932,20 @@ async def bulk_reward_guild(guild_id: int, balance_delta: int = 0, chips_delta: 
 # --- SOCIAL (daily / work / rob / rep) ---
 
 async def get_user_social(user_id: int, guild_id: int) -> dict:
-    """Returns daily_streak, last_daily, last_work, rep_count, last_rep_given, work_count."""
+    """Returns daily_streak, last_daily, rep_count, last_rep_given."""
     async with aiosqlite.connect(DB_NAME) as db:
         await _ensure_user(db, user_id, guild_id)
         await db.commit()
         async with db.execute(
-            "SELECT daily_streak, last_daily, last_work, rep_count, last_rep_given, work_count FROM user_balances WHERE user_id = ? AND guild_id = ?",
+            "SELECT daily_streak, last_daily, rep_count, last_rep_given FROM user_balances WHERE user_id = ? AND guild_id = ?",
             (user_id, guild_id),
         ) as cursor:
             row = await cursor.fetchone()
     if row:
-        return {"daily_streak": row[0], "last_daily": row[1], "last_work": row[2],
-                "rep_count": row[3], "last_rep_given": row[4], "work_count": row[5]}
-    return {"daily_streak": 0, "last_daily": 0.0, "last_work": 0.0,
-            "rep_count": 0, "last_rep_given": 0.0, "work_count": 0}
+        return {"daily_streak": row[0], "last_daily": row[1],
+                "rep_count": row[2], "last_rep_given": row[3]}
+    return {"daily_streak": 0, "last_daily": 0.0,
+            "rep_count": 0, "last_rep_given": 0.0}
 
 
 async def update_daily(user_id: int, guild_id: int, streak: int, last_daily: float) -> None:
@@ -960,16 +954,6 @@ async def update_daily(user_id: int, guild_id: int, streak: int, last_daily: flo
         await db.execute(
             "UPDATE user_balances SET daily_streak = ?, last_daily = ? WHERE user_id = ? AND guild_id = ?",
             (streak, last_daily, user_id, guild_id),
-        )
-        await db.commit()
-
-
-async def update_work(user_id: int, guild_id: int, last_work: float, work_count: int) -> None:
-    async with aiosqlite.connect(DB_NAME) as db:
-        await _ensure_user(db, user_id, guild_id)
-        await db.execute(
-            "UPDATE user_balances SET last_work = ?, work_count = ? WHERE user_id = ? AND guild_id = ?",
-            (last_work, work_count, user_id, guild_id),
         )
         await db.commit()
 

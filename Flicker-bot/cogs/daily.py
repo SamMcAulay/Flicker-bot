@@ -4,24 +4,9 @@ import random
 from discord.ext import commands
 from database import (
     get_balance, update_balance, get_server_settings,
-    get_user_social, update_daily, update_work, update_rep_cooldown,
+    get_user_social, update_daily, update_rep_cooldown,
     unlock_achievement, ACHIEVEMENTS,
 )
-
-WORK_LINES = [
-    "You fixed a critical bug in production.",
-    "You wrote documentation nobody will read.",
-    "You optimised a query that was already fast.",
-    "You attended three meetings that could have been emails.",
-    "You deployed on a Friday. Somehow it worked.",
-    "You helped a colleague debug for two hours. It was a typo.",
-    "You refactored perfectly good code.",
-    "You reviewed PRs all day.",
-    "You onboarded a new team member.",
-    "You set up a CI pipeline from scratch.",
-    "You migrated a database — nothing broke.",
-    "You wrote unit tests for code you didn't write.",
-]
 
 
 def fmt_cooldown(remaining_secs: float) -> tuple[int, int]:
@@ -114,40 +99,6 @@ class Daily(commands.Cog):
             reward=f"{reward:,}", streak=streak
         )
         await ctx.send(msg + achievement_msg(ach))
-
-    # ── !work ─────────────────────────────────────────────────────────────────
-
-    @commands.command(name="work")
-    async def work(self, ctx):
-        """Work for a small Stardust reward. Has a cooldown."""
-        settings = await get_server_settings(ctx.guild.id)
-        if not settings["command_toggles"].get("work", True):
-            return await ctx.send("❌ Work is disabled in this server.")
-
-        po = settings["payout_overrides"]
-        to = settings["text_overrides"]
-        social = await get_user_social(ctx.author.id, ctx.guild.id)
-        now = time.time()
-
-        cooldown_secs = po.get("work_cooldown_hours", 4) * 3600
-        elapsed = now - social["last_work"]
-        if elapsed < cooldown_secs:
-            remaining = cooldown_secs - elapsed
-            h, m = fmt_cooldown(remaining)
-            return await ctx.send(to.get("work_cooldown", "⚙️ You're still working! Come back in **{hours}h {mins}m**.").format(hours=h, mins=m))
-
-        reward = random.randint(int(po.get("work_min", 10)), int(po.get("work_max", 25)))
-        new_count = social["work_count"] + 1
-        await update_balance(ctx.author.id, ctx.guild.id, reward)
-        await update_work(ctx.author.id, ctx.guild.id, now, new_count)
-
-        ach = await check_balance_achievements(ctx.author.id, ctx.guild.id)
-        if new_count >= 25:
-            if await unlock_achievement(ctx.author.id, ctx.guild.id, "hard_worker"):
-                ach.append("hard_worker")
-
-        flavour = random.choice(WORK_LINES)
-        await ctx.send(f"⚙️ {flavour}\n+**{reward:,} Stardust**" + achievement_msg(ach))
 
     # ── !rob ──────────────────────────────────────────────────────────────────
 
