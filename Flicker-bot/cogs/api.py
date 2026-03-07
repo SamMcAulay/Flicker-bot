@@ -244,10 +244,6 @@ class Api(commands.Cog):
         app.router.add_post("/admin/guild/{guild_id}/channels", self.handle_admin_add_channel)
         app.router.add_route("OPTIONS", "/admin/guild/{guild_id}/channels/{channel_id}", self.handle_preflight)
         app.router.add_delete("/admin/guild/{guild_id}/channels/{channel_id}", self.handle_admin_remove_channel)
-        app.router.add_route("OPTIONS", "/admin/guild/{guild_id}/seed-builtins", self.handle_preflight)
-        app.router.add_post("/admin/guild/{guild_id}/seed-builtins", self.handle_admin_seed_builtins)
-        app.router.add_route("OPTIONS", "/admin/guild/{guild_id}/seed-event-texts", self.handle_preflight)
-        app.router.add_post("/admin/guild/{guild_id}/seed-event-texts", self.handle_admin_seed_event_texts)
         app.router.add_route("OPTIONS", "/admin/guild/{guild_id}/broadcast", self.handle_preflight)
         app.router.add_post("/admin/guild/{guild_id}/broadcast", self.handle_admin_broadcast)
         app.router.add_route("OPTIONS", "/admin/guild/{guild_id}/leave", self.handle_preflight)
@@ -712,27 +708,6 @@ class Api(commands.Cog):
         channel_id = int(request.match_info["channel_id"])
         await remove_allowed_channel(channel_id)
         await log_admin_action(payload["user_id"], "remove_channel", guild_id=guild_id, target_id=channel_id)
-        return web.json_response({"ok": True}, headers=_get_cors_headers(request))
-
-    async def handle_admin_seed_builtins(self, request: web.Request):
-        payload = _require_admin(request)
-        guild_id = int(request.match_info["guild_id"])
-        existing = await get_response_groups(guild_id)
-        existing_names = {r[1] for r in existing}
-        seeded = []
-        for group in BUILTIN_GROUPS:
-            if group["name"] not in existing_names:
-                await add_response_group(guild_id, group["name"], group["triggers"], group["responses"])
-                seeded.append(group["name"])
-        await log_admin_action(payload["user_id"], "seed_builtins", guild_id=guild_id,
-                               details=f"seeded: {', '.join(seeded) or 'none (all existed)'}")
-        return web.json_response({"ok": True, "seeded": seeded}, headers=_get_cors_headers(request))
-
-    async def handle_admin_seed_event_texts(self, request: web.Request):
-        payload = _require_admin(request)
-        guild_id = int(request.match_info["guild_id"])
-        await update_server_settings(guild_id, text_overrides=BUILTIN_TEXT_OVERRIDES)
-        await log_admin_action(payload["user_id"], "seed_event_texts", guild_id=guild_id)
         return web.json_response({"ok": True}, headers=_get_cors_headers(request))
 
     async def handle_admin_broadcast(self, request: web.Request):
