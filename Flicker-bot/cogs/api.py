@@ -65,6 +65,38 @@ BUILTIN_TEXT_OVERRIDES = {
     "scramble_desc":     "Flicker's star charts got all mixed up!\n\nUnscramble this cosmic word:",
     "scramble_win":      "🌟 **Brilliant!** {winner} unscrambled **{word}** and earned **{reward} Stardust**!",
     "scramble_lose":     "💨 **Time's up!** The word was **{word}**.",
+    # Coinflip
+    "cf_spinning":       "The coin spins...",
+    "cf_win":            "It landed on **{result}**! {icon}\n🎉 You won **{winnings}** Chips!",
+    "cf_lose":           "It landed on **{result}**! {icon}\n❌ You lost **{bet}** Chips.",
+    # Slots
+    "slots_title":       "🎰 Cosmic Chip Slots 🎰",
+    "slots_win":         "🎉 **WINNER!** 🎉\nYou won **{winnings}** Chips! ({multiplier}×)",
+    "slots_lose":        "❌ **Lost!** ❌\nBetter luck next time.",
+    # Blackjack
+    "bj_title":          "🃏 Blackjack",
+    "bj_natural_win":    "🎉 **Blackjack! You win {payout} Chips!** (2.5×)",
+    "bj_bust":           "💥 Bust! You lose.",
+    "bj_win":            "🎉 You win!",
+    "bj_push":           "🤝 Push — bet returned.",
+    "bj_dealer_wins":    "❌ Dealer wins.",
+    # Higher or Lower
+    "hilo_title":        "🃏 Higher or Lower",
+    "hilo_tie":          "🤝 **Tie!** Next card was also **{card}** ({value}). Keep going!",
+    "hilo_correct":      "✅ **Correct!** Next card was **{card}** ({value}).",
+    "hilo_wrong":        "❌ **Wrong!** Next card was **{card}** ({value}). You lost **{bet}** Chips.",
+    "hilo_cashout":      "💰 **Cashed out!** You won **{payout}** Chips ({mult}×)!",
+    # Warp
+    "warp_title":        "🚀 Hyperwarp Drive",
+    "warp_start":        "The engines are humming... Dare to initiate warp?",
+    "warp_overload":     "💥 **OVERLOAD!** You pushed the engines too far. You lost **{bet}** Chips.",
+    "warp_jump":         "🌌 *ZOOOOM...* You safely navigated jump {jumps}!",
+    "warp_dock":         "🛸 **Safely docked!** You returned to base with **{payout}** Chips ({mult}×)!",
+    # Roulette
+    "rt_title":          "🎡 Starwheel Roulette",
+    "rt_spinning":       "Spinning the cosmic wheel...",
+    "rt_win":            "🎉 **You win {winnings} Chips!** ({multiplier}×)",
+    "rt_lose":           "❌ **You lost {bet} Chips.**",
 }
 
 DISCORD_API = "https://discord.com/api/v10"

@@ -435,6 +435,38 @@ _DEFAULT_TEXT_OVERRIDES = {
     "scramble_desc":     "Unscramble this word:",
     "scramble_win":      "✅ **Nice work!** {winner} unscrambled **{word}** and earned **{reward} Stardust**!",
     "scramble_lose":     "⏰ **Time's up!** The word was **{word}**.",
+    # Coinflip
+    "cf_spinning":       "The coin is spinning...",
+    "cf_win":            "It landed on **{result}**! {icon}\n🎉 You won **{winnings}** Chips!",
+    "cf_lose":           "It landed on **{result}**! {icon}\n❌ You lost **{bet}** Chips.",
+    # Slots
+    "slots_title":       "🎰 Slots",
+    "slots_win":         "🎉 **WINNER!**\nYou won **{winnings}** Chips! ({multiplier}×)",
+    "slots_lose":        "❌ **No match!**\nBetter luck next time.",
+    # Blackjack
+    "bj_title":          "🃏 Blackjack",
+    "bj_natural_win":    "🎉 **Blackjack! You win {payout} Chips!** (2.5×)",
+    "bj_bust":           "💥 Bust! You lose.",
+    "bj_win":            "🎉 You win!",
+    "bj_push":           "🤝 Push — bet returned.",
+    "bj_dealer_wins":    "❌ Dealer wins.",
+    # Higher or Lower
+    "hilo_title":        "🃏 Higher or Lower",
+    "hilo_tie":          "🤝 **Tie!** Next card was **{card}** ({value}). Keep going!",
+    "hilo_correct":      "✅ **Correct!** Next card was **{card}** ({value}).",
+    "hilo_wrong":        "❌ **Wrong!** Next card was **{card}** ({value}). You lost **{bet}** Chips.",
+    "hilo_cashout":      "💰 **Cashed out!** You won **{payout}** Chips ({mult}×)!",
+    # Warp
+    "warp_title":        "🚀 Warp Drive",
+    "warp_start":        "Push your luck for escalating multipliers. Do you dare?",
+    "warp_overload":     "💥 **OVERLOAD!** You lost **{bet}** Chips.",
+    "warp_jump":         "✅ **Jump {jumps} successful!**",
+    "warp_dock":         "🛸 **Docked!** You returned with **{payout}** Chips ({mult}×)!",
+    # Roulette
+    "rt_title":          "🎡 Roulette",
+    "rt_spinning":       "Spinning the wheel...",
+    "rt_win":            "🎉 **You win {winnings} Chips!** ({multiplier}×)",
+    "rt_lose":           "❌ **You lost {bet} Chips.**",
 }
 
 _DEFAULT_PAYOUT_OVERRIDES = {

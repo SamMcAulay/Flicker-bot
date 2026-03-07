@@ -145,7 +145,7 @@ class Admin(commands.Cog):
 
     @commands.command(name="seedeventtexts")
     async def seed_event_texts(self, ctx):
-        """Seeds Wish Galaxy event text into this server's text_overrides."""
+        """Seeds Wish Galaxy event and game text into this server's text_overrides."""
         await update_server_settings(ctx.guild.id, text_overrides=BUILTIN_TEXT_OVERRIDES)
         await ctx.send("✅ Event text seeded. All game and event messages now use the custom language.")
 
