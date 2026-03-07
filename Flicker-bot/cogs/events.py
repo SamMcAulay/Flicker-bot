@@ -182,12 +182,13 @@ class Events(commands.Cog):
         target_code = f"{''.join(random.choices(chars, k=3))}-{''.join(random.choices(chars, k=3))}"
         display_code = "\u200b".join(target_code)  # zero-width spaces prevent copy-paste on mobile
         embed = discord.Embed(title="💫 Catch the Falling Star!", description=f"Quick! Type this magic spell before it disappears:\n\n**{display_code}**", color=discord.Color.gold())
-        embed.set_footer(text=f"You have 10 seconds! Reward: {reward} Stardust")
+        timeout = int(po.get("fast_type_timeout", 10))
+        embed.set_footer(text=f"You have {timeout} seconds! Reward: {reward} Stardust")
         await channel.send(embed=embed)
         def check(m): return m.channel == channel and not m.author.bot and m.content == target_code
         guild_id = channel.guild.id if channel.guild else 0
         try:
-            winner = await self.bot.wait_for('message', check=check, timeout=10.0)
+            winner = await self.bot.wait_for('message', check=check, timeout=float(timeout))
             await update_balance(winner.author.id, guild_id, reward)
             await increment_stat("stardust_earned", reward)
             await increment_stat("games_correct")
@@ -205,12 +206,13 @@ class Events(commands.Cog):
         if op_type == "mul_add": equation, answer = f"{a} × {b} + {c}", (a * b) + c
         else: equation, answer = f"{b} + {c} - {a}", b + c - a
         embed = discord.Embed(title="🧩 Starship Puzzle!", description=f"Help me count the moons! What is:\n\n**{equation}**", color=discord.Color.teal())
-        embed.set_footer(text=f"You have 12 seconds! Reward: {reward} Stardust")
+        timeout = int(po.get("math_timeout", 12))
+        embed.set_footer(text=f"You have {timeout} seconds! Reward: {reward} Stardust")
         await channel.send(embed=embed)
         def check(m): return m.channel == channel and not m.author.bot and m.content == str(answer)
         guild_id = channel.guild.id if channel.guild else 0
         try:
-            winner = await self.bot.wait_for('message', check=check, timeout=12.0)
+            winner = await self.bot.wait_for('message', check=check, timeout=float(timeout))
             await update_balance(winner.author.id, guild_id, reward)
             await increment_stat("stardust_earned", reward)
             await increment_stat("games_correct")
@@ -238,7 +240,8 @@ class Events(commands.Cog):
                     opts_text = "".join([f"**{['A','B','C','D'][i]}.** {o}\n" for i, o in enumerate(all_opts)])
                     
                     embed = discord.Embed(title="✨ A Little Star Told Me...", description=f"{question}\n\n{opts_text}\n*Make a wish and pick an answer!*", color=discord.Color.purple())
-                    embed.set_footer(text=f"You have 30 seconds! Reward: {reward} Stardust")
+                    timeout = int(po.get("trivia_timeout", 30))
+                    embed.set_footer(text=f"You have {timeout} seconds! Reward: {reward} Stardust")
                     await channel.send(embed=embed)
                     valid_letters = ["a", "b", "c", "d"]
                     normalized_opts = [normalize_answer(o) for o in all_opts]
@@ -247,7 +250,7 @@ class Events(commands.Cog):
                         return m.channel == channel and not m.author.bot and (t in valid_letters or normalize_answer(t) in normalized_opts)
                     guild_id = channel.guild.id if channel.guild else 0
                     try:
-                        msg = await self.bot.wait_for('message', check=check, timeout=30.0)
+                        msg = await self.bot.wait_for('message', check=check, timeout=float(timeout))
                         if msg.content.lower().strip() == correct_let.lower() or normalize_answer(msg.content) == normalize_answer(correct):
                             await update_balance(msg.author.id, guild_id, reward)
                             await increment_stat("stardust_earned", reward)
@@ -283,7 +286,8 @@ class Events(commands.Cog):
             description=f"Flicker's star charts got all mixed up!\n\nUnscramble this cosmic word:\n\n**`{scrambled.upper()}`**",
             color=discord.Color.blue(),
         )
-        embed.set_footer(text=f"You have 20 seconds! Reward: {reward} Stardust")
+        timeout = int(po.get("word_scramble_timeout", 20))
+        embed.set_footer(text=f"You have {timeout} seconds! Reward: {reward} Stardust")
         await channel.send(embed=embed)
 
         def check(m):
@@ -291,7 +295,7 @@ class Events(commands.Cog):
 
         guild_id = channel.guild.id if channel.guild else 0
         try:
-            winner = await self.bot.wait_for("message", check=check, timeout=20.0)
+            winner = await self.bot.wait_for("message", check=check, timeout=float(timeout))
             await update_balance(winner.author.id, guild_id, reward)
             await increment_stat("stardust_earned", reward)
             await increment_stat("games_correct")
