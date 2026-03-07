@@ -144,6 +144,13 @@ async def init_db():
         except aiosqlite.OperationalError:
             pass
 
+        # Safe migration: add text_overrides column to server_settings
+        try:
+            await db.execute("ALTER TABLE server_settings ADD COLUMN text_overrides TEXT DEFAULT '{}'")
+            await db.commit()
+        except aiosqlite.OperationalError:
+            pass
+
 # --- ECONOMY (per-server) ---
 
 async def _ensure_user(db, user_id: int, guild_id: int) -> None:
@@ -400,6 +407,36 @@ _DEFAULT_GAME_TOGGLES = {"coinflip": True, "slots": True, "blackjack": True, "hi
 _DEFAULT_EVENT_TOGGLES = {"chat_drops": True, "trivia": True, "math": True, "fast_type": True, "word_scramble": True}
 _DEFAULT_COMMAND_TOGGLES = {"balance": True, "pay": True, "buychips": True, "top": True}
 _DEFAULT_CHAT_TOGGLES = {"greet": True, "bye": True, "thanks": True, "love": True, "kill": True, "trial": True, "fact": True}
+_DEFAULT_TEXT_OVERRIDES = {
+    # Drop
+    "drop_title":        "A reward dropped!",
+    "drop_desc":         "Grab it before it's gone!",
+    "drop_catch_prompt": "type **catch**!",
+    "drop_win":          "**All done!**",
+    "drop_lose":         "**Too slow!** The reward disappeared.",
+    # Fast Type
+    "fast_type_title":   "⌨️ Type it Quick!",
+    "fast_type_desc":    "Quick! Type this code before time runs out:",
+    "fast_type_win":     "✅ **Got it!** {winner} earned **{reward} Stardust**!",
+    "fast_type_lose":    "⏰ **Time's up!** The code was `{code}`.",
+    # Math
+    "math_title":        "🧮 Math Challenge!",
+    "math_desc":         "Solve this to earn a reward. What is:",
+    "math_win":          "✅ **Correct!** {winner} solved it and earned **{reward} Stardust**!",
+    "math_lose":         "⏰ **Time's up!** The answer was **{answer}**.",
+    # Trivia
+    "trivia_title":      "❓ Trivia Time!",
+    "trivia_tagline":    "*Pick your answer!*",
+    "trivia_correct":    "🎉 **Correct!** The answer was **{answer}**. {winner} earned **{reward} Stardust**!",
+    "trivia_wrong":      "❌ **Wrong!** The answer was **{answer}**.",
+    "trivia_timeout":    "⏰ **Time's up!** The answer was **{answer}**.",
+    # Word Scramble
+    "scramble_title":    "🔤 Word Scramble!",
+    "scramble_desc":     "Unscramble this word:",
+    "scramble_win":      "✅ **Nice work!** {winner} unscrambled **{word}** and earned **{reward} Stardust**!",
+    "scramble_lose":     "⏰ **Time's up!** The word was **{word}**.",
+}
+
 _DEFAULT_PAYOUT_OVERRIDES = {
     # Slots
     "slots_jackpot":          10,
@@ -431,7 +468,7 @@ async def get_server_settings(guild_id: int) -> dict:
     """Returns merged settings dict with defaults for any missing keys."""
     async with aiosqlite.connect(DB_NAME) as db:
         async with db.execute(
-            "SELECT command_toggles, game_toggles, event_toggles, payout_overrides, chat_toggles, prefix FROM server_settings WHERE guild_id = ?",
+            "SELECT command_toggles, game_toggles, event_toggles, payout_overrides, chat_toggles, prefix, text_overrides FROM server_settings WHERE guild_id = ?",
             (guild_id,)
         ) as cursor:
             row = await cursor.fetchone()
@@ -443,6 +480,7 @@ async def get_server_settings(guild_id: int) -> dict:
             "payout_overrides": dict(_DEFAULT_PAYOUT_OVERRIDES),
             "chat_toggles": dict(_DEFAULT_CHAT_TOGGLES),
             "prefix": "!",
+            "text_overrides": dict(_DEFAULT_TEXT_OVERRIDES),
         }
     return {
         "command_toggles":  {**_DEFAULT_COMMAND_TOGGLES,  **json.loads(row[0] or "{}")},
@@ -451,6 +489,7 @@ async def get_server_settings(guild_id: int) -> dict:
         "payout_overrides": {**_DEFAULT_PAYOUT_OVERRIDES, **json.loads(row[3] or "{}")},
         "chat_toggles":     {**_DEFAULT_CHAT_TOGGLES,     **json.loads(row[4] or "{}")},
         "prefix": row[5] or "!",
+        "text_overrides":   {**_DEFAULT_TEXT_OVERRIDES,   **json.loads(row[6] or "{}")},
     }
 
 
@@ -462,6 +501,7 @@ async def update_server_settings(
     payout_overrides: dict = None,
     chat_toggles: dict = None,
     prefix: str = None,
+    text_overrides: dict = None,
 ) -> None:
     """Upsert server settings, merging provided fields over existing values."""
     current = await get_server_settings(guild_id)
@@ -471,20 +511,22 @@ async def update_server_settings(
     new_po  = json.dumps({**current["payout_overrides"], **(payout_overrides or {})})
     new_cht = json.dumps({**current["chat_toggles"],     **(chat_toggles     or {})})
     new_pfx = prefix if prefix is not None else current["prefix"]
+    new_to  = json.dumps({**current["text_overrides"],   **(text_overrides   or {})})
     async with aiosqlite.connect(DB_NAME) as db:
         await db.execute(
             """
-            INSERT INTO server_settings (guild_id, command_toggles, game_toggles, event_toggles, payout_overrides, chat_toggles, prefix)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO server_settings (guild_id, command_toggles, game_toggles, event_toggles, payout_overrides, chat_toggles, prefix, text_overrides)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(guild_id) DO UPDATE SET
                 command_toggles  = excluded.command_toggles,
                 game_toggles     = excluded.game_toggles,
                 event_toggles    = excluded.event_toggles,
                 payout_overrides = excluded.payout_overrides,
                 chat_toggles     = excluded.chat_toggles,
-                prefix           = excluded.prefix
+                prefix           = excluded.prefix,
+                text_overrides   = excluded.text_overrides
             """,
-            (guild_id, new_ct, new_gt, new_et, new_po, new_cht, new_pfx)
+            (guild_id, new_ct, new_gt, new_et, new_po, new_cht, new_pfx, new_to)
         )
         await db.commit()
 

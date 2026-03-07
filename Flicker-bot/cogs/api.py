@@ -42,6 +42,31 @@ BUILTIN_GROUPS = [
      "responses": ["*scanning databanks...* 100% cap.", "*calculating...* The math checks out! Probably!", "My sources say 'maybe'."]},
 ]
 
+BUILTIN_TEXT_OVERRIDES = {
+    "drop_title":        "✨ Ooh! Shiny!",
+    "drop_desc":         "Someone dropped a pouch of Stardust!",
+    "drop_catch_prompt": "type **catch**!",
+    "drop_win":          "🤲 **The dust has settled!**",
+    "drop_lose":         "💨 **Poof!** The Stardust blew away in the cosmic wind.",
+    "fast_type_title":   "💫 Catch the Falling Star!",
+    "fast_type_desc":    "Quick! Type this magic spell before it disappears:",
+    "fast_type_win":     "🌟 **Caught it!** {winner} snagged **{reward} Stardust**!",
+    "fast_type_lose":    "💨 **Whoosh!** It flew away. The spell was `{code}`.",
+    "math_title":        "🧩 Starship Puzzle!",
+    "math_desc":         "Help me count the moons! What is:",
+    "math_win":          "🤖 **Thank you!** {winner} solved the puzzle! **{reward} Stardust** for you!",
+    "math_lose":         "💤 **I fell asleep counting...** The answer was **{answer}**.",
+    "trivia_title":      "✨ A Little Star Told Me...",
+    "trivia_tagline":    "*Make a wish and pick an answer!*",
+    "trivia_correct":    "🎉 **Woohoo!** That's right! The answer was **{answer}**. {winner} caught **{reward} Stardust**!",
+    "trivia_wrong":      "☁️ **Oh no!** That wasn't quite right. The answer was **{answer}**.",
+    "trivia_timeout":    "🌙 **The stars have faded.** The answer was **{answer}**.",
+    "scramble_title":    "🔤 Galactic Scramble!",
+    "scramble_desc":     "Flicker's star charts got all mixed up!\n\nUnscramble this cosmic word:",
+    "scramble_win":      "🌟 **Brilliant!** {winner} unscrambled **{word}** and earned **{reward} Stardust**!",
+    "scramble_lose":     "💨 **Time's up!** The word was **{word}**.",
+}
+
 DISCORD_API = "https://discord.com/api/v10"
 MANAGE_GUILD = 0x20
 ADMINISTRATOR = 0x8
@@ -320,6 +345,7 @@ class Api(commands.Cog):
             event_toggles=body.get("event_toggles"),
             payout_overrides=body.get("payout_overrides"),
             chat_toggles=body.get("chat_toggles"),
+            text_overrides=body.get("text_overrides"),
         )
         return web.json_response({"ok": True}, headers=_get_cors_headers(request))
 

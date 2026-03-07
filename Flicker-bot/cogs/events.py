@@ -108,9 +108,11 @@ class Events(commands.Cog):
     async def event_drop(self, channel):
         guild_id = channel.guild.id if channel.guild else None
         po = {}
+        to = {}
         if guild_id:
             settings = await get_server_settings(guild_id)
             po = settings["payout_overrides"]
+            to = settings["text_overrides"]
         reward_ranges = [
             (int(po.get("drop_1_min", 10)), int(po.get("drop_1_max", 12))),
             (int(po.get("drop_2_min", 8)),  int(po.get("drop_2_max", 10))),
@@ -120,6 +122,9 @@ class Events(commands.Cog):
         ]
         rewards = [random.randint(lo, hi) for lo, hi in reward_ranges]
 
+        timeout_drop = int(po.get("drop_timeout", 15))
+        catch_prompt = to.get("drop_catch_prompt", "type **catch**!")
+
         def build_embed(catchers):
             slots = []
             next_idx = len(catchers)
@@ -127,15 +132,15 @@ class Events(commands.Cog):
                 if i < len(catchers):
                     slots.append(f"**#{i + 1}** {catchers[i].mention} — **{rewards[i]} ✨**")
                 elif i == next_idx:
-                    slots.append(f"**#{i + 1}** **{rewards[i]} ✨** — type **catch**!")
+                    slots.append(f"**#{i + 1}** **{rewards[i]} ✨** — {catch_prompt}")
                 else:
                     slots.append(f"**#{i + 1}** *???*")
             embed = discord.Embed(
-                title="✨ Ooh! Shiny!",
-                description="Someone dropped a pouch of Stardust!\n\n" + "\n".join(slots),
+                title=to.get("drop_title", "A reward dropped!"),
+                description=to.get("drop_desc", "Grab it before it's gone!") + "\n\n" + "\n".join(slots),
                 color=discord.Color.magenta()
             )
-            embed.set_footer(text="15 seconds to catch!")
+            embed.set_footer(text=f"{timeout_drop} seconds to catch!")
             return embed
 
         catchers = []
@@ -146,7 +151,7 @@ class Events(commands.Cog):
         self.drop_caught_ids = set()
 
         try:
-            deadline = asyncio.get_event_loop().time() + 15.0
+            deadline = asyncio.get_event_loop().time() + float(timeout_drop)
             while len(catchers) < 5:
                 remaining = deadline - asyncio.get_event_loop().time()
                 if remaining <= 0:
@@ -169,19 +174,22 @@ class Events(commands.Cog):
                 await update_balance(user.id, guild_id, reward)
                 await increment_stat("stardust_earned", reward)
                 await increment_stat("games_correct")
-            await channel.send("🤲 **The dust has settled!**")
+            await channel.send(to.get("drop_win", "**All done!**"))
         else:
             await increment_stat("games_wrong")
-            await channel.send("💨 **Poof!** The Stardust blew away in the cosmic wind.")
+            await channel.send(to.get("drop_lose", "**Too slow!** The reward disappeared."))
 
     async def event_fast_type(self, channel):
         guild_id = channel.guild.id if channel.guild else None
-        po = (await get_server_settings(guild_id))["payout_overrides"] if guild_id else {}
+        settings = await get_server_settings(guild_id) if guild_id else {}
+        po = settings.get("payout_overrides", {})
+        to = settings.get("text_overrides", {})
         reward = random.randint(int(po.get("fast_type_min", 10)), int(po.get("fast_type_max", 20)))
         chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
         target_code = f"{''.join(random.choices(chars, k=3))}-{''.join(random.choices(chars, k=3))}"
         display_code = "\u200b".join(target_code)  # zero-width spaces prevent copy-paste on mobile
-        embed = discord.Embed(title="💫 Catch the Falling Star!", description=f"Quick! Type this magic spell before it disappears:\n\n**{display_code}**", color=discord.Color.gold())
+        desc = to.get("fast_type_desc", "Quick! Type this code before time runs out:")
+        embed = discord.Embed(title=to.get("fast_type_title", "⌨️ Type it Quick!"), description=f"{desc}\n\n**{display_code}**", color=discord.Color.gold())
         timeout = int(po.get("fast_type_timeout", 10))
         embed.set_footer(text=f"You have {timeout} seconds! Reward: {reward} Stardust")
         await channel.send(embed=embed)
@@ -192,20 +200,23 @@ class Events(commands.Cog):
             await update_balance(winner.author.id, guild_id, reward)
             await increment_stat("stardust_earned", reward)
             await increment_stat("games_correct")
-            await channel.send(f"🌟 **Caught it!** {winner.author.mention} snagged **{reward} Stardust**!")
+            await channel.send(to.get("fast_type_win", "✅ **Got it!** {winner} earned **{reward} Stardust**!").format(winner=winner.author.mention, reward=reward))
         except asyncio.TimeoutError:
             await increment_stat("games_wrong")
-            await channel.send(f"💨 **Whoosh!** It flew away. The spell was `{target_code}`.")
+            await channel.send(to.get("fast_type_lose", "⏰ **Time's up!** The code was `{code}`.").format(code=target_code))
 
     async def event_math(self, channel):
         guild_id = channel.guild.id if channel.guild else None
-        po = (await get_server_settings(guild_id))["payout_overrides"] if guild_id else {}
+        settings = await get_server_settings(guild_id) if guild_id else {}
+        po = settings.get("payout_overrides", {})
+        to = settings.get("text_overrides", {})
         reward = random.randint(int(po.get("math_min", 20)), int(po.get("math_max", 40)))
         a, b, c = random.randint(2, 9), random.randint(10, 20), random.randint(1, 50)
         op_type = random.choice(["mul_add", "sub_add"])
         if op_type == "mul_add": equation, answer = f"{a} × {b} + {c}", (a * b) + c
         else: equation, answer = f"{b} + {c} - {a}", b + c - a
-        embed = discord.Embed(title="🧩 Starship Puzzle!", description=f"Help me count the moons! What is:\n\n**{equation}**", color=discord.Color.teal())
+        desc = to.get("math_desc", "Solve this to earn a reward. What is:")
+        embed = discord.Embed(title=to.get("math_title", "🧮 Math Challenge!"), description=f"{desc}\n\n**{equation}**", color=discord.Color.teal())
         timeout = int(po.get("math_timeout", 12))
         embed.set_footer(text=f"You have {timeout} seconds! Reward: {reward} Stardust")
         await channel.send(embed=embed)
@@ -216,14 +227,16 @@ class Events(commands.Cog):
             await update_balance(winner.author.id, guild_id, reward)
             await increment_stat("stardust_earned", reward)
             await increment_stat("games_correct")
-            await channel.send(f"🤖 **Thank you!** {winner.author.mention} solved the puzzle! **{reward} Stardust** for you!")
+            await channel.send(to.get("math_win", "✅ **Correct!** {winner} solved it and earned **{reward} Stardust**!").format(winner=winner.author.mention, reward=reward))
         except asyncio.TimeoutError:
             await increment_stat("games_wrong")
-            await channel.send(f"💤 **I fell asleep counting...** The answer was **{answer}**.")
+            await channel.send(to.get("math_lose", "⏰ **Time's up!** The answer was **{answer}**.").format(answer=answer))
 
     async def event_trivia(self, channel):
         guild_id = channel.guild.id if channel.guild else None
-        po = (await get_server_settings(guild_id))["payout_overrides"] if guild_id else {}
+        settings = await get_server_settings(guild_id) if guild_id else {}
+        po = settings.get("payout_overrides", {})
+        to = settings.get("text_overrides", {})
         reward = random.randint(int(po.get("trivia_min", 50)), int(po.get("trivia_max", 100)))
         url = "https://opentdb.com/api.php?amount=1&category=17&type=multiple"
         async with aiohttp.ClientSession() as session:
@@ -238,8 +251,8 @@ class Events(commands.Cog):
                     correct_idx = all_opts.index(correct)
                     correct_let = ["A", "B", "C", "D"][correct_idx]
                     opts_text = "".join([f"**{['A','B','C','D'][i]}.** {o}\n" for i, o in enumerate(all_opts)])
-                    
-                    embed = discord.Embed(title="✨ A Little Star Told Me...", description=f"{question}\n\n{opts_text}\n*Make a wish and pick an answer!*", color=discord.Color.purple())
+                    tagline = to.get("trivia_tagline", "*Pick your answer!*")
+                    embed = discord.Embed(title=to.get("trivia_title", "❓ Trivia Time!"), description=f"{question}\n\n{opts_text}\n{tagline}", color=discord.Color.purple())
                     timeout = int(po.get("trivia_timeout", 30))
                     embed.set_footer(text=f"You have {timeout} seconds! Reward: {reward} Stardust")
                     await channel.send(embed=embed)
@@ -255,17 +268,19 @@ class Events(commands.Cog):
                             await update_balance(msg.author.id, guild_id, reward)
                             await increment_stat("stardust_earned", reward)
                             await increment_stat("games_correct")
-                            await channel.send(f"🎉 **Woohoo!** That's right! The answer was **{correct}**. {msg.author.mention} caught **{reward} Stardust**!")
+                            await channel.send(to.get("trivia_correct", "🎉 **Correct!** The answer was **{answer}**. {winner} earned **{reward} Stardust**!").format(answer=correct, winner=msg.author.mention, reward=reward))
                         else:
                             await increment_stat("games_wrong")
-                            await channel.send(f"☁️ **Oh no!** That wasn't quite right. The answer was **{correct}**.")
+                            await channel.send(to.get("trivia_wrong", "❌ **Wrong!** The answer was **{answer}**.").format(answer=correct))
                     except asyncio.TimeoutError:
                         await increment_stat("games_wrong")
-                        await channel.send(f"🌙 **The stars have faded.** The answer was **{correct}**.")
+                        await channel.send(to.get("trivia_timeout", "⏰ **Time's up!** The answer was **{answer}**.").format(answer=correct))
 
     async def event_word_scramble(self, channel):
         guild_id = channel.guild.id if channel.guild else None
-        po = (await get_server_settings(guild_id))["payout_overrides"] if guild_id else {}
+        settings = await get_server_settings(guild_id) if guild_id else {}
+        po = settings.get("payout_overrides", {})
+        to = settings.get("text_overrides", {})
         reward = random.randint(int(po.get("word_scramble_min", 15)), int(po.get("word_scramble_max", 30)))
         word = random.choice(SCRAMBLE_WORDS)
 
@@ -281,9 +296,10 @@ class Events(commands.Cog):
         if scrambled == word:
             scrambled = word[::-1]
 
+        desc = to.get("scramble_desc", "Unscramble this word:")
         embed = discord.Embed(
-            title="🔤 Galactic Scramble!",
-            description=f"Flicker's star charts got all mixed up!\n\nUnscramble this cosmic word:\n\n**`{scrambled.upper()}`**",
+            title=to.get("scramble_title", "🔤 Word Scramble!"),
+            description=f"{desc}\n\n**`{scrambled.upper()}`**",
             color=discord.Color.blue(),
         )
         timeout = int(po.get("word_scramble_timeout", 20))
@@ -299,10 +315,10 @@ class Events(commands.Cog):
             await update_balance(winner.author.id, guild_id, reward)
             await increment_stat("stardust_earned", reward)
             await increment_stat("games_correct")
-            await channel.send(f"🌟 **Brilliant!** {winner.author.mention} unscrambled **{word}** and earned **{reward} Stardust**!")
+            await channel.send(to.get("scramble_win", "✅ **Nice work!** {winner} unscrambled **{word}** and earned **{reward} Stardust**!").format(winner=winner.author.mention, word=word, reward=reward))
         except asyncio.TimeoutError:
             await increment_stat("games_wrong")
-            await channel.send(f"💨 **Time's up!** The word was **{word}**.")
+            await channel.send(to.get("scramble_lose", "⏰ **Time's up!** The word was **{word}**.").format(word=word))
 
 
 async def setup(bot):

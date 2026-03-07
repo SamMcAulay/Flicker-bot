@@ -13,7 +13,8 @@ from database import (
     get_response_groups,
     add_response_group,
 )
-from cogs.api import BUILTIN_GROUPS
+from cogs.api import BUILTIN_GROUPS, BUILTIN_TEXT_OVERRIDES
+from database import update_server_settings
 
 
 class Admin(commands.Cog):
@@ -141,6 +142,12 @@ class Admin(commands.Cog):
         if skipped:
             lines.append(f"⏭️ Already existed, skipped: {', '.join(skipped)}")
         await ctx.send("\n".join(lines) or "Nothing to seed.")
+
+    @commands.command(name="seedeventtexts")
+    async def seed_event_texts(self, ctx):
+        """Seeds Wish Galaxy event text into this server's text_overrides."""
+        await update_server_settings(ctx.guild.id, text_overrides=BUILTIN_TEXT_OVERRIDES)
+        await ctx.send("✅ Event text seeded. All game and event messages now use the custom language.")
 
     @commands.command(name="dbcheck")
     async def dbcheck(self, ctx):
