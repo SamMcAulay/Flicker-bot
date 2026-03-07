@@ -21,6 +21,11 @@ ROULETTE_RED = {1, 3, 5, 7, 9, 12, 14, 16, 18, 19, 21, 23, 25, 27, 30, 32, 34, 3
 ROULETTE_BLACK = {2, 4, 6, 8, 10, 11, 13, 15, 17, 20, 22, 24, 26, 28, 29, 31, 33, 35}
 ROULETTE_SPIN_FRAMES = ["🌀", "💫", "⭐", "🌟", "✨"]
 
+# ── RPS helpers ───────────────────────────────────────────────────────────────
+RPS_WINS = {"rock": "scissors", "scissors": "paper", "paper": "rock"}
+RPS_ICONS = {"rock": "🪨", "paper": "📄", "scissors": "✂️"}
+DICE_FACES = ["⚀", "⚁", "⚂", "⚃", "⚄", "⚅"]
+
 
 def new_deck():
     return [f"{r}{s}" for r, s in itertools.product(RANKS, SUITS)]
@@ -504,6 +509,122 @@ class WarpView(discord.ui.View):
             await record_user_game(self.ctx.author.id, "warp", self.bet)
 
 
+# ── Crash View ────────────────────────────────────────────────────────────────
+class CrashView(discord.ui.View):
+    def __init__(self, cog, ctx, bet: int, crash_at: float, track_stats: bool = True, to: dict = None):
+        super().__init__(timeout=35)
+        self.cog = cog
+        self.ctx = ctx
+        self.guild_id = ctx.guild.id
+        self.bet = bet
+        self.crash_at = crash_at
+        self.current_mult = 1.0
+        self.done = False
+        self.track_stats = track_stats
+        self.to = to or {}
+        self.message = None
+
+    def build_embed(self) -> discord.Embed:
+        m = self.current_mult
+        potential = int(self.bet * m)
+        return discord.Embed(
+            title=self.to.get("crash_title", "📈 Crash"),
+            description=f"📈 **{m:.2f}×** — Cash out before it crashes!\nPotential payout: **{potential:,}** Chips",
+            color=discord.Color.gold(),
+        )
+
+    @discord.ui.button(label="🚀 Cash Out", style=discord.ButtonStyle.green)
+    async def cash_out_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user.id != self.ctx.author.id:
+            return await interaction.response.send_message("Not your game!", ephemeral=True)
+        if self.done:
+            return await interaction.response.send_message("Game already ended!", ephemeral=True)
+        self.done = True
+        mult = self.current_mult
+        payout = int(self.bet * mult)
+        await update_chips(self.ctx.author.id, self.guild_id, payout)
+        if self.track_stats:
+            net = payout - self.bet
+            await increment_stat("chips_wagered", self.bet)
+            if net > 0:
+                await increment_stat("chips_earnt", net)
+            else:
+                await increment_stat("chips_lost", -net)
+        await record_user_game(self.ctx.author.id, "crash", self.bet, earnt=max(0, payout - self.bet), biggest_win=max(0, payout - self.bet))
+        button.disabled = True
+        embed = discord.Embed(
+            title=self.to.get("crash_title", "📈 Crash"),
+            description=self.to.get("crash_cashed_out", "🚀 **Cashed out at {mult}×!** You won **{payout}** Chips!").format(mult=f"{mult:.2f}", payout=f"{payout:,}"),
+            color=discord.Color.green(),
+        )
+        await interaction.response.edit_message(embed=embed, view=self)
+        self.stop()
+
+    async def run(self):
+        mult = 1.0
+        while True:
+            mult = round(mult + random.uniform(0.08, 0.25), 2)
+            crashed = mult >= self.crash_at
+            if crashed:
+                mult = round(self.crash_at, 2)
+            self.current_mult = mult
+            await asyncio.sleep(0.75)
+            if self.done:
+                return
+            if crashed:
+                self.done = True
+                if self.track_stats:
+                    await increment_stat("chips_wagered", self.bet)
+                    await increment_stat("chips_lost", self.bet)
+                await record_user_game(self.ctx.author.id, "crash", self.bet, lost=self.bet)
+                for child in self.children:
+                    child.disabled = True
+                embed = discord.Embed(
+                    title=self.to.get("crash_title", "📈 Crash"),
+                    description=self.to.get("crash_crashed", "💥 **CRASHED at {mult}×!** You lost **{bet}** Chips.").format(mult=f"{mult:.2f}", bet=f"{self.bet:,}"),
+                    color=discord.Color.red(),
+                )
+                if self.message:
+                    try:
+                        await self.message.edit(embed=embed, view=self)
+                    except Exception:
+                        pass
+                self.stop()
+                return
+            if self.message:
+                try:
+                    await self.message.edit(embed=self.build_embed())
+                except Exception:
+                    pass
+
+    async def on_timeout(self):
+        if self.done:
+            return
+        self.done = True
+        payout = int(self.bet * self.current_mult)
+        await update_chips(self.ctx.author.id, self.guild_id, payout)
+        if self.track_stats:
+            net = payout - self.bet
+            await increment_stat("chips_wagered", self.bet)
+            if net > 0:
+                await increment_stat("chips_earnt", net)
+            else:
+                await increment_stat("chips_lost", -net)
+        await record_user_game(self.ctx.author.id, "crash", self.bet, earnt=max(0, payout - self.bet), biggest_win=max(0, payout - self.bet))
+        for child in self.children:
+            child.disabled = True
+        if self.message:
+            try:
+                embed = discord.Embed(
+                    title=self.to.get("crash_title", "📈 Crash"),
+                    description=f"⏰ Auto cashed out at **{self.current_mult:.2f}×**! You received **{payout:,}** Chips.",
+                    color=discord.Color.blurple(),
+                )
+                await self.message.edit(embed=embed, view=self)
+            except Exception:
+                pass
+
+
 # ── Gamble Cog ────────────────────────────────────────────────────────────────
 class Gamble(commands.Cog):
     def __init__(self, bot):
@@ -935,6 +1056,196 @@ class Gamble(commands.Cog):
         embed.set_footer(text=f"Bet: {bet_input} · {bet:,} Chips wagered")
         await msg.edit(embed=embed)
 
+    # ── Dice ──────────────────────────────────────────────────────────────────
+    @commands.command(name="dice", aliases=["roll"])
+    @commands.cooldown(1, 10, commands.BucketType.user)
+    async def dice(self, ctx, amount: str, choice: str):
+        """Roll a die! Usage: !dice <chips> <1-6|high|low>"""
+        dice_mult = 5.0
+        to = {}
+        if ctx.guild:
+            settings = await get_server_settings(ctx.guild.id)
+            if not settings["game_toggles"].get("dice", True):
+                ctx.command.reset_cooldown(ctx)
+                return await ctx.send("❌ Dice is disabled in this server.")
+            dice_mult = settings["payout_overrides"].get("dice_win_multiplier", 5.0)
+            to = settings["text_overrides"]
+
+        choice = choice.lower()
+        aliases = {"h": "high", "l": "low"}
+        choice = aliases.get(choice, choice)
+        if choice not in {"1", "2", "3", "4", "5", "6", "high", "low"}:
+            ctx.command.reset_cooldown(ctx)
+            return await ctx.send("❌ Choose a number (1–6), `high` (4–6), or `low` (1–3). Usage: `!dice <chips> <choice>`")
+
+        bet = await self.get_bet_amount(ctx, amount)
+        if bet == -1:
+            return ctx.command.reset_cooldown(ctx)
+
+        chips = await get_chips(ctx.author.id, ctx.guild.id)
+        if chips < bet:
+            ctx.command.reset_cooldown(ctx)
+            return await ctx.send(f"❌ You don't have enough Chips! (Balance: {chips:,})")
+
+        await update_chips(ctx.author.id, ctx.guild.id, -bet)
+
+        if ctx.author.id == self.boss_id:
+            # Boss: favour their pick
+            if choice in {"1", "2", "3", "4", "5", "6"}:
+                roll = int(choice) if random.random() < 0.6 else random.randint(1, 6)
+            elif choice == "high":
+                roll = random.choice([4, 5, 6]) if random.random() < 0.7 else random.randint(1, 3)
+            else:
+                roll = random.choice([1, 2, 3]) if random.random() < 0.7 else random.randint(4, 6)
+        else:
+            roll = random.randint(1, 6)
+
+        face = DICE_FACES[roll - 1]
+
+        if choice in {"high", "low"}:
+            won = (choice == "high" and roll >= 4) or (choice == "low" and roll <= 3)
+            mult = 1.9
+            choice_label = "High (4–6)" if choice == "high" else "Low (1–3)"
+        else:
+            won = roll == int(choice)
+            mult = dice_mult
+            choice_label = f"Number {choice}"
+
+        embed = discord.Embed(title=to.get("dice_title", "🎲 Dice Roll"), color=discord.Color.blue())
+        embed.add_field(name="Your Bet", value=choice_label, inline=True)
+        embed.add_field(name="Result", value=f"{face} **{roll}**", inline=True)
+
+        if won:
+            winnings = int(bet * mult)
+            await update_chips(ctx.author.id, ctx.guild.id, winnings)
+            if ctx.author.id != self.boss_id:
+                await increment_stat("chips_wagered", bet)
+                await increment_stat("chips_earnt", winnings - bet)
+            await record_user_game(ctx.author.id, "dice", bet, earnt=winnings - bet, biggest_win=winnings - bet)
+            embed.color = discord.Color.green()
+            embed.description = to.get("dice_win", "🎉 **You won {winnings} Chips!** ({multiplier}×)").format(winnings=f"{winnings:,}", multiplier=mult)
+        else:
+            if ctx.author.id != self.boss_id:
+                await increment_stat("chips_wagered", bet)
+                await increment_stat("chips_lost", bet)
+            await record_user_game(ctx.author.id, "dice", bet, lost=bet)
+            embed.color = discord.Color.red()
+            embed.description = to.get("dice_lose", "❌ **You lost {bet} Chips.**").format(bet=f"{bet:,}")
+
+        await ctx.send(embed=embed)
+
+    # ── Crash ─────────────────────────────────────────────────────────────────
+    @commands.command(name="crash")
+    @commands.cooldown(1, 20, commands.BucketType.user)
+    async def crash(self, ctx, amount: str):
+        """Ride the crash multiplier — cash out before it explodes! Usage: !crash <chips>"""
+        house_edge = 0.05
+        to = {}
+        if ctx.guild:
+            settings = await get_server_settings(ctx.guild.id)
+            if not settings["game_toggles"].get("crash", True):
+                ctx.command.reset_cooldown(ctx)
+                return await ctx.send("❌ Crash is disabled in this server.")
+            house_edge = settings["payout_overrides"].get("crash_house_edge", 0.05)
+            to = settings["text_overrides"]
+
+        bet = await self.get_bet_amount(ctx, amount)
+        if bet == -1:
+            return ctx.command.reset_cooldown(ctx)
+
+        chips = await get_chips(ctx.author.id, ctx.guild.id)
+        if chips < bet:
+            ctx.command.reset_cooldown(ctx)
+            return await ctx.send(f"❌ You don't have enough Chips! (Balance: {chips:,})")
+
+        # Determine crash point: E[payout] = (1 - house_edge) × bet
+        if ctx.author.id == self.boss_id:
+            crash_at = random.uniform(3.0, 20.0)
+        else:
+            u = random.random()
+            crash_at = min(50.0, max(1.0, (1.0 - house_edge) / max(u, 0.001)))
+
+        await update_chips(ctx.author.id, ctx.guild.id, -bet)
+        view = CrashView(self, ctx, bet, crash_at, track_stats=(ctx.author.id != self.boss_id), to=to)
+        msg = await ctx.send(embed=view.build_embed(), view=view)
+        view.message = msg
+        asyncio.create_task(view.run())
+
+    # ── Rock Paper Scissors ───────────────────────────────────────────────────
+    @commands.command(name="rps")
+    @commands.cooldown(1, 10, commands.BucketType.user)
+    async def rps(self, ctx, amount: str, choice: str):
+        """Rock Paper Scissors vs Flicker! Usage: !rps <chips> <rock|paper|scissors>"""
+        rps_mult = 1.9
+        to = {}
+        if ctx.guild:
+            settings = await get_server_settings(ctx.guild.id)
+            if not settings["game_toggles"].get("rps", True):
+                ctx.command.reset_cooldown(ctx)
+                return await ctx.send("❌ RPS is disabled in this server.")
+            rps_mult = settings["payout_overrides"].get("rps_win_multiplier", 1.9)
+            to = settings["text_overrides"]
+
+        choice_norm = choice.lower()
+        rps_aliases = {"r": "rock", "p": "paper", "s": "scissors"}
+        choice_norm = rps_aliases.get(choice_norm, choice_norm)
+        if choice_norm not in ("rock", "paper", "scissors"):
+            ctx.command.reset_cooldown(ctx)
+            return await ctx.send("❌ Choose `rock`, `paper`, or `scissors`. Usage: `!rps <chips> <choice>`")
+
+        bet = await self.get_bet_amount(ctx, amount)
+        if bet == -1:
+            return ctx.command.reset_cooldown(ctx)
+
+        chips = await get_chips(ctx.author.id, ctx.guild.id)
+        if chips < bet:
+            ctx.command.reset_cooldown(ctx)
+            return await ctx.send(f"❌ You don't have enough Chips! (Balance: {chips:,})")
+
+        await update_chips(ctx.author.id, ctx.guild.id, -bet)
+
+        if ctx.author.id == self.boss_id:
+            # Boss: bot picks what the boss beats
+            bot_choice = RPS_WINS[choice_norm] if random.random() > 0.1 else choice_norm
+        else:
+            bot_choice = random.choice(["rock", "paper", "scissors"])
+
+        player_icon = RPS_ICONS[choice_norm]
+        bot_icon = RPS_ICONS[bot_choice]
+
+        embed = discord.Embed(
+            title=to.get("rps_title", "🎮 Rock Paper Scissors"),
+            color=discord.Color.blue(),
+        )
+        embed.add_field(name="You", value=f"{player_icon} **{choice_norm.capitalize()}**", inline=True)
+        embed.add_field(name="Flicker", value=f"{bot_icon} **{bot_choice.capitalize()}**", inline=True)
+
+        if choice_norm == bot_choice:
+            await update_chips(ctx.author.id, ctx.guild.id, bet)
+            if ctx.author.id != self.boss_id:
+                await increment_stat("chips_wagered", bet)
+            await record_user_game(ctx.author.id, "rps", bet)
+            embed.color = discord.Color.gold()
+            embed.description = to.get("rps_tie", "🤝 **It's a tie!** Your bet was returned.")
+        elif RPS_WINS[choice_norm] == bot_choice:
+            winnings = int(bet * rps_mult)
+            await update_chips(ctx.author.id, ctx.guild.id, winnings)
+            if ctx.author.id != self.boss_id:
+                await increment_stat("chips_wagered", bet)
+                await increment_stat("chips_earnt", winnings - bet)
+            await record_user_game(ctx.author.id, "rps", bet, earnt=winnings - bet, biggest_win=winnings - bet)
+            embed.color = discord.Color.green()
+            embed.description = to.get("rps_win", "🎉 **You win {winnings} Chips!** ({multiplier}×)").format(winnings=f"{winnings:,}", multiplier=rps_mult)
+        else:
+            if ctx.author.id != self.boss_id:
+                await increment_stat("chips_wagered", bet)
+                await increment_stat("chips_lost", bet)
+            await record_user_game(ctx.author.id, "rps", bet, lost=bet)
+            embed.color = discord.Color.red()
+            embed.description = to.get("rps_lose", "❌ **You lost {bet} Chips.**").format(bet=f"{bet:,}")
+
+        await ctx.send(embed=embed)
+
     # ── My Stats ──────────────────────────────────────────────────────────────
     @commands.command(name="stats")
     async def stats(self, ctx, user: discord.Member = None):
@@ -953,14 +1264,17 @@ class Gamble(commands.Cog):
             "coinflip":  "🪙 Coinflip",
             "slots":     "🎰 Slots",
             "blackjack": "🃏 Blackjack",
-            "hilo":      "🃏 Higher/Lower",
+            "hilo":      "📈 Higher/Lower",
             "warp":      "🚀 Warp",
             "roulette":  "🎡 Roulette",
+            "dice":      "🎲 Dice",
+            "crash":     "📈 Crash",
+            "rps":       "🎮 RPS",
         }
 
         total_played = total_wagered = total_earnt = total_lost = total_best = 0
         fields = []
-        for game_key in ("coinflip", "slots", "blackjack", "hilo", "warp", "roulette"):
+        for game_key in ("coinflip", "slots", "blackjack", "hilo", "warp", "roulette", "dice", "crash", "rps"):
             if game_key not in stats:
                 continue
             played, wagered, earnt, lost, biggest_win = stats[game_key]
@@ -1017,6 +1331,14 @@ class Gamble(commands.Cog):
                 await ctx.send(
                     f"⏳ Whoa there, {ctx.author.mention}! The dealer needs a second. Try again in **{time_left}s**."
                 )
+        elif isinstance(error, commands.MissingRequiredArgument):
+            usage = {
+                "dice":  "`!dice <chips> <1-6|high|low>`",
+                "rps":   "`!rps <chips> <rock|paper|scissors>`",
+                "crash": "`!crash <chips>`",
+            }
+            hint = usage.get(ctx.command.name, f"`!{ctx.command.name} <chips>`")
+            await ctx.send(f"❌ Missing argument. Usage: {hint}")
         else:
             print(f"Gambling Error: {error}")
 

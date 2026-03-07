@@ -448,6 +448,7 @@ class Api(commands.Cog):
             payout_overrides=body.get("payout_overrides"),
             chat_toggles=body.get("chat_toggles"),
             text_overrides=body.get("text_overrides"),
+            welcome_config=body.get("welcome_config"),
         )
         return web.json_response({"ok": True}, headers=_get_cors_headers(request))
 
