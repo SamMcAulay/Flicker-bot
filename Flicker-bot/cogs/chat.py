@@ -202,7 +202,8 @@ class Chat(commands.Cog):
                 triggers = set(json.loads(triggers_json))
                 responses = json.loads(responses_json)
                 if words & triggers and responses:
-                    await message.channel.send(random.choice(responses))
+                    response = random.choice(responses).replace("@user", message.author.mention)
+                    await message.channel.send(response)
                     return
 
         # Check legacy custom responses
@@ -211,7 +212,7 @@ class Chat(commands.Cog):
             for (_, trigger_words_str, response_text) in custom_responses:
                 triggers = {t.strip().lower() for t in trigger_words_str.split(",") if t.strip()}
                 if words & triggers:
-                    await message.channel.send(response_text)
+                    await message.channel.send(response_text.replace("@user", message.author.mention))
                     return
 
         if random.random() < 0.01:
