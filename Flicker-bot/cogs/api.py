@@ -16,6 +16,9 @@ from database import (
     add_response_group,
     set_response_group_enabled,
     delete_response_group,
+    set_guild_disabled,
+    get_guild_users,
+    set_user_balance_admin,
 )
 
 BUILTIN_GROUPS = [
@@ -123,14 +126,30 @@ def _last_commit() -> dict:
     }
 
 
-def _issue_token(user_id: int, guilds: list[int]) -> str:
+def _issue_token(user_id: int, guilds: list[int], is_admin: bool = False) -> str:
     secret = os.getenv("DASHBOARD_SECRET_KEY", "changeme")
     payload = {
         "user_id": user_id,
         "guilds": guilds,
+        "is_admin": is_admin,
         "exp": int(time.time()) + 3600 * 8,  # 8-hour session
     }
     return jwt.encode(payload, secret, algorithm="HS256")
+
+
+def _require_admin(request: web.Request) -> dict:
+    auth = request.headers.get("Authorization", "")
+    if not auth.startswith("Bearer "):
+        raise web.HTTPUnauthorized(reason="Missing token")
+    try:
+        payload = _decode_token(auth[7:])
+    except jwt.ExpiredSignatureError:
+        raise web.HTTPUnauthorized(reason="Token expired")
+    except jwt.InvalidTokenError:
+        raise web.HTTPUnauthorized(reason="Invalid token")
+    if not payload.get("is_admin"):
+        raise web.HTTPForbidden(reason="Admin access required")
+    return payload
 
 
 def _decode_token(token: str) -> dict:
@@ -193,6 +212,16 @@ class Api(commands.Cog):
         # Guild list for the server selector
         app.router.add_route("OPTIONS", "/api/guilds", self.handle_preflight)
         app.router.add_get("/api/guilds", self.handle_get_guilds)
+
+        # Admin routes (require is_admin JWT claim)
+        app.router.add_route("OPTIONS", "/admin/guilds", self.handle_preflight)
+        app.router.add_get("/admin/guilds", self.handle_admin_guilds)
+        app.router.add_route("OPTIONS", "/admin/guild/{guild_id}/users", self.handle_preflight)
+        app.router.add_get("/admin/guild/{guild_id}/users", self.handle_admin_users)
+        app.router.add_route("OPTIONS", "/admin/guild/{guild_id}/users/{user_id}", self.handle_preflight)
+        app.router.add_patch("/admin/guild/{guild_id}/users/{user_id}", self.handle_admin_set_balance)
+        app.router.add_route("OPTIONS", "/admin/guild/{guild_id}/toggle", self.handle_preflight)
+        app.router.add_patch("/admin/guild/{guild_id}/toggle", self.handle_admin_toggle)
 
         self.runner = web.AppRunner(app)
         await self.runner.setup()
@@ -297,7 +326,13 @@ class Api(commands.Cog):
             if has_admin and int(g["id"]) in bot_guild_ids:
                 allowed_guilds.append(int(g["id"]))
 
-        token = _issue_token(user_id, allowed_guilds)
+        admin_ids = {
+            int(x.strip())
+            for x in os.getenv("ADMIN_USER_IDS", "").split(",")
+            if x.strip().isdigit()
+        }
+        is_admin = user_id in admin_ids
+        token = _issue_token(user_id, allowed_guilds, is_admin=is_admin)
         # Redirect to the dashboard with the token in the URL fragment
         raise web.HTTPFound(location=f"{dashboard_url}#token={token}")
 
@@ -493,6 +528,67 @@ class Api(commands.Cog):
                 status=207,
                 headers=_get_cors_headers(request),
             )
+        return web.json_response({"ok": True}, headers=_get_cors_headers(request))
+
+    # ── Admin routes ───────────────────────────────────────────────────────────
+
+    async def handle_admin_guilds(self, request: web.Request):
+        _require_admin(request)
+        guilds = []
+        for g in self.bot.guilds:
+            settings = await get_server_settings(g.id)
+            users = await get_guild_users(g.id)
+            guilds.append({
+                "id": str(g.id),
+                "name": g.name,
+                "icon": str(g.icon) if g.icon else None,
+                "member_count": g.member_count,
+                "bot_disabled": settings.get("bot_disabled", False),
+                "user_count": len(users),
+            })
+        guilds.sort(key=lambda x: x["name"].lower())
+        return web.json_response({"guilds": guilds}, headers=_get_cors_headers(request))
+
+    async def handle_admin_users(self, request: web.Request):
+        _require_admin(request)
+        guild_id = int(request.match_info["guild_id"])
+        rows = await get_guild_users(guild_id)
+        guild = self.bot.get_guild(guild_id)
+        users = []
+        for user_id, balance, chips in rows:
+            member = guild.get_member(user_id) if guild else None
+            users.append({
+                "user_id": str(user_id),
+                "username": member.name if member else str(user_id),
+                "display_name": member.display_name if member else str(user_id),
+                "avatar": str(member.display_avatar.url) if member else None,
+                "balance": balance,
+                "chips": chips,
+            })
+        return web.json_response({"users": users}, headers=_get_cors_headers(request))
+
+    async def handle_admin_set_balance(self, request: web.Request):
+        _require_admin(request)
+        guild_id = int(request.match_info["guild_id"])
+        user_id = int(request.match_info["user_id"])
+        try:
+            body = await request.json()
+        except Exception:
+            raise web.HTTPBadRequest(reason="Invalid JSON")
+        balance = int(body.get("balance", 0))
+        chips = int(body.get("chips", 0))
+        await set_user_balance_admin(user_id, guild_id, balance, chips)
+        return web.json_response({"ok": True}, headers=_get_cors_headers(request))
+
+    async def handle_admin_toggle(self, request: web.Request):
+        _require_admin(request)
+        guild_id = int(request.match_info["guild_id"])
+        try:
+            body = await request.json()
+        except Exception:
+            raise web.HTTPBadRequest(reason="Invalid JSON")
+        disabled = bool(body.get("disabled", False))
+        await set_guild_disabled(guild_id, disabled)
         return web.json_response({"ok": True}, headers=_get_cors_headers(request))
 
 

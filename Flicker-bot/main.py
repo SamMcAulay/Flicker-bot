@@ -36,6 +36,16 @@ class FlickerBot(commands.Bot):
 
 bot = FlickerBot()
 
+
+@bot.check
+async def global_not_disabled(ctx):
+    if ctx.guild:
+        settings = await get_server_settings(ctx.guild.id)
+        if settings.get("bot_disabled", False):
+            return False
+    return True
+
+
 @bot.event
 async def on_ready():
     print(f'{bot.user} is online and ready!')

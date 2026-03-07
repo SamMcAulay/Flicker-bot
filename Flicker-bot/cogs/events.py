@@ -58,6 +58,8 @@ class Events(commands.Cog):
         event_toggles = {}
         if guild_id:
             settings = await get_server_settings(guild_id)
+            if settings.get("bot_disabled", False):
+                return
             event_toggles = settings["event_toggles"]
 
         chance = random.random()

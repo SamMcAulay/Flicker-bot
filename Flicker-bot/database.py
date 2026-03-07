@@ -151,6 +151,13 @@ async def init_db():
         except aiosqlite.OperationalError:
             pass
 
+        # Safe migration: add bot_disabled column to server_settings
+        try:
+            await db.execute("ALTER TABLE server_settings ADD COLUMN bot_disabled INTEGER DEFAULT 0")
+            await db.commit()
+        except aiosqlite.OperationalError:
+            pass
+
 # --- ECONOMY (per-server) ---
 
 async def _ensure_user(db, user_id: int, guild_id: int) -> None:
@@ -500,7 +507,7 @@ async def get_server_settings(guild_id: int) -> dict:
     """Returns merged settings dict with defaults for any missing keys."""
     async with aiosqlite.connect(DB_NAME) as db:
         async with db.execute(
-            "SELECT command_toggles, game_toggles, event_toggles, payout_overrides, chat_toggles, prefix, text_overrides FROM server_settings WHERE guild_id = ?",
+            "SELECT command_toggles, game_toggles, event_toggles, payout_overrides, chat_toggles, prefix, text_overrides, bot_disabled FROM server_settings WHERE guild_id = ?",
             (guild_id,)
         ) as cursor:
             row = await cursor.fetchone()
@@ -513,6 +520,7 @@ async def get_server_settings(guild_id: int) -> dict:
             "chat_toggles": dict(_DEFAULT_CHAT_TOGGLES),
             "prefix": "!",
             "text_overrides": dict(_DEFAULT_TEXT_OVERRIDES),
+            "bot_disabled": False,
         }
     return {
         "command_toggles":  {**_DEFAULT_COMMAND_TOGGLES,  **json.loads(row[0] or "{}")},
@@ -522,6 +530,7 @@ async def get_server_settings(guild_id: int) -> dict:
         "chat_toggles":     {**_DEFAULT_CHAT_TOGGLES,     **json.loads(row[4] or "{}")},
         "prefix": row[5] or "!",
         "text_overrides":   {**_DEFAULT_TEXT_OVERRIDES,   **json.loads(row[6] or "{}")},
+        "bot_disabled": bool(row[7]) if row[7] is not None else False,
     }
 
 
@@ -559,6 +568,42 @@ async def update_server_settings(
                 text_overrides   = excluded.text_overrides
             """,
             (guild_id, new_ct, new_gt, new_et, new_po, new_cht, new_pfx, new_to)
+        )
+        await db.commit()
+
+
+# --- ADMIN ---
+
+async def set_guild_disabled(guild_id: int, disabled: bool) -> None:
+    async with aiosqlite.connect(DB_NAME) as db:
+        await db.execute(
+            """INSERT INTO server_settings (guild_id, bot_disabled)
+               VALUES (?, ?)
+               ON CONFLICT(guild_id) DO UPDATE SET bot_disabled = excluded.bot_disabled""",
+            (guild_id, 1 if disabled else 0),
+        )
+        await db.commit()
+
+
+async def get_guild_users(guild_id: int) -> list:
+    """Returns list of (user_id, balance, chips) for all users with any balance in a guild."""
+    async with aiosqlite.connect(DB_NAME) as db:
+        async with db.execute(
+            "SELECT user_id, balance, chips FROM user_balances WHERE guild_id = ? ORDER BY balance DESC",
+            (guild_id,),
+        ) as cursor:
+            return await cursor.fetchall()
+
+
+async def set_user_balance_admin(user_id: int, guild_id: int, balance: int, chips: int) -> None:
+    async with aiosqlite.connect(DB_NAME) as db:
+        await db.execute(
+            """INSERT INTO user_balances (user_id, guild_id, balance, chips)
+               VALUES (?, ?, ?, ?)
+               ON CONFLICT(user_id, guild_id) DO UPDATE SET
+                   balance = excluded.balance,
+                   chips   = excluded.chips""",
+            (user_id, guild_id, balance, chips),
         )
         await db.commit()
 
