@@ -19,6 +19,17 @@ from database import (
     set_guild_disabled,
     get_guild_users,
     set_user_balance_admin,
+    block_user,
+    unblock_user,
+    get_blocked_users,
+    log_admin_action,
+    get_audit_log,
+    reset_guild_economy,
+    bulk_reward_guild,
+    get_user_all_guilds,
+    add_allowed_channel,
+    remove_allowed_channel,
+    get_allowed_channels,
 )
 
 BUILTIN_GROUPS = [
@@ -216,12 +227,40 @@ class Api(commands.Cog):
         # Admin routes (require is_admin JWT claim)
         app.router.add_route("OPTIONS", "/admin/guilds", self.handle_preflight)
         app.router.add_get("/admin/guilds", self.handle_admin_guilds)
+        app.router.add_route("OPTIONS", "/admin/stats", self.handle_preflight)
+        app.router.add_get("/admin/stats", self.handle_admin_stats)
         app.router.add_route("OPTIONS", "/admin/guild/{guild_id}/users", self.handle_preflight)
         app.router.add_get("/admin/guild/{guild_id}/users", self.handle_admin_users)
         app.router.add_route("OPTIONS", "/admin/guild/{guild_id}/users/{user_id}", self.handle_preflight)
         app.router.add_patch("/admin/guild/{guild_id}/users/{user_id}", self.handle_admin_set_balance)
         app.router.add_route("OPTIONS", "/admin/guild/{guild_id}/toggle", self.handle_preflight)
         app.router.add_patch("/admin/guild/{guild_id}/toggle", self.handle_admin_toggle)
+        app.router.add_route("OPTIONS", "/admin/guild/{guild_id}/economy/reset", self.handle_preflight)
+        app.router.add_post("/admin/guild/{guild_id}/economy/reset", self.handle_admin_economy_reset)
+        app.router.add_route("OPTIONS", "/admin/guild/{guild_id}/economy/bulk-reward", self.handle_preflight)
+        app.router.add_post("/admin/guild/{guild_id}/economy/bulk-reward", self.handle_admin_bulk_reward)
+        app.router.add_route("OPTIONS", "/admin/guild/{guild_id}/channels", self.handle_preflight)
+        app.router.add_get("/admin/guild/{guild_id}/channels", self.handle_admin_get_channels)
+        app.router.add_post("/admin/guild/{guild_id}/channels", self.handle_admin_add_channel)
+        app.router.add_route("OPTIONS", "/admin/guild/{guild_id}/channels/{channel_id}", self.handle_preflight)
+        app.router.add_delete("/admin/guild/{guild_id}/channels/{channel_id}", self.handle_admin_remove_channel)
+        app.router.add_route("OPTIONS", "/admin/guild/{guild_id}/seed-builtins", self.handle_preflight)
+        app.router.add_post("/admin/guild/{guild_id}/seed-builtins", self.handle_admin_seed_builtins)
+        app.router.add_route("OPTIONS", "/admin/guild/{guild_id}/seed-event-texts", self.handle_preflight)
+        app.router.add_post("/admin/guild/{guild_id}/seed-event-texts", self.handle_admin_seed_event_texts)
+        app.router.add_route("OPTIONS", "/admin/guild/{guild_id}/broadcast", self.handle_preflight)
+        app.router.add_post("/admin/guild/{guild_id}/broadcast", self.handle_admin_broadcast)
+        app.router.add_route("OPTIONS", "/admin/guild/{guild_id}/leave", self.handle_preflight)
+        app.router.add_post("/admin/guild/{guild_id}/leave", self.handle_admin_leave_guild)
+        app.router.add_route("OPTIONS", "/admin/user/{user_id}", self.handle_preflight)
+        app.router.add_get("/admin/user/{user_id}", self.handle_admin_user_lookup)
+        app.router.add_route("OPTIONS", "/admin/blocks", self.handle_preflight)
+        app.router.add_get("/admin/blocks", self.handle_admin_get_blocks)
+        app.router.add_route("OPTIONS", "/admin/blocks/{user_id}", self.handle_preflight)
+        app.router.add_post("/admin/blocks/{user_id}", self.handle_admin_block_user)
+        app.router.add_delete("/admin/blocks/{user_id}", self.handle_admin_unblock_user)
+        app.router.add_route("OPTIONS", "/admin/audit-log", self.handle_preflight)
+        app.router.add_get("/admin/audit-log", self.handle_admin_audit_log)
 
         self.runner = web.AppRunner(app)
         await self.runner.setup()
@@ -581,7 +620,7 @@ class Api(commands.Cog):
         return web.json_response({"ok": True}, headers=_get_cors_headers(request))
 
     async def handle_admin_toggle(self, request: web.Request):
-        _require_admin(request)
+        payload = _require_admin(request)
         guild_id = int(request.match_info["guild_id"])
         try:
             body = await request.json()
@@ -589,7 +628,239 @@ class Api(commands.Cog):
             raise web.HTTPBadRequest(reason="Invalid JSON")
         disabled = bool(body.get("disabled", False))
         await set_guild_disabled(guild_id, disabled)
+        await log_admin_action(payload["user_id"], "toggle_guild", guild_id=guild_id,
+                               details=f"disabled={disabled}")
         return web.json_response({"ok": True}, headers=_get_cors_headers(request))
+
+    async def handle_admin_stats(self, request: web.Request):
+        _require_admin(request)
+        stats = await get_all_stats()
+        uptime = int(time.time() - self.start_time) if self.start_time else 0
+        data = {
+            "uptime_seconds": uptime,
+            "last_commit": _last_commit(),
+            "guild_count": len(self.bot.guilds),
+            "latency_ms": round(self.bot.latency * 1000, 1),
+            "pet_count":       stats.get("pet_count", 0),
+            "stardust_earned": stats.get("stardust_earned", 0),
+            "games_correct":   stats.get("games_correct", 0),
+            "games_wrong":     stats.get("games_wrong", 0),
+            "chips_wagered":   stats.get("chips_wagered", 0),
+            "chips_earnt":     stats.get("chips_earnt", 0),
+            "chips_lost":      stats.get("chips_lost", 0),
+        }
+        return web.json_response(data, headers=_get_cors_headers(request))
+
+    async def handle_admin_economy_reset(self, request: web.Request):
+        payload = _require_admin(request)
+        guild_id = int(request.match_info["guild_id"])
+        count = await reset_guild_economy(guild_id)
+        await log_admin_action(payload["user_id"], "economy_reset", guild_id=guild_id,
+                               details=f"removed {count} rows")
+        return web.json_response({"ok": True, "removed": count}, headers=_get_cors_headers(request))
+
+    async def handle_admin_bulk_reward(self, request: web.Request):
+        payload = _require_admin(request)
+        guild_id = int(request.match_info["guild_id"])
+        try:
+            body = await request.json()
+        except Exception:
+            raise web.HTTPBadRequest(reason="Invalid JSON")
+        balance_delta = int(body.get("balance", 0))
+        chips_delta = int(body.get("chips", 0))
+        count = await bulk_reward_guild(guild_id, balance_delta=balance_delta, chips_delta=chips_delta)
+        await log_admin_action(payload["user_id"], "bulk_reward", guild_id=guild_id,
+                               details=f"balance+{balance_delta} chips+{chips_delta} to {count} users")
+        return web.json_response({"ok": True, "affected": count}, headers=_get_cors_headers(request))
+
+    async def handle_admin_get_channels(self, request: web.Request):
+        _require_admin(request)
+        guild_id = int(request.match_info["guild_id"])
+        all_channel_ids = await get_allowed_channels()
+        guild = self.bot.get_guild(guild_id)
+        channels = []
+        for cid in all_channel_ids:
+            ch = self.bot.get_channel(cid)
+            if ch and ch.guild and ch.guild.id == guild_id:
+                channels.append({"id": str(cid), "name": ch.name})
+        # Also include any IDs that belong to the guild but channel not cached
+        if guild:
+            guild_channel_ids = {c.id for c in guild.text_channels}
+            for cid in all_channel_ids:
+                if cid in guild_channel_ids and not any(c["id"] == str(cid) for c in channels):
+                    ch = guild.get_channel(cid)
+                    channels.append({"id": str(cid), "name": ch.name if ch else str(cid)})
+        return web.json_response({"channels": channels}, headers=_get_cors_headers(request))
+
+    async def handle_admin_add_channel(self, request: web.Request):
+        payload = _require_admin(request)
+        guild_id = int(request.match_info["guild_id"])
+        try:
+            body = await request.json()
+        except Exception:
+            raise web.HTTPBadRequest(reason="Invalid JSON")
+        channel_id = int(body.get("channel_id", 0))
+        if not channel_id:
+            raise web.HTTPBadRequest(reason="Missing channel_id")
+        await add_allowed_channel(channel_id)
+        await log_admin_action(payload["user_id"], "add_channel", guild_id=guild_id, target_id=channel_id)
+        return web.json_response({"ok": True}, headers=_get_cors_headers(request))
+
+    async def handle_admin_remove_channel(self, request: web.Request):
+        payload = _require_admin(request)
+        guild_id = int(request.match_info["guild_id"])
+        channel_id = int(request.match_info["channel_id"])
+        await remove_allowed_channel(channel_id)
+        await log_admin_action(payload["user_id"], "remove_channel", guild_id=guild_id, target_id=channel_id)
+        return web.json_response({"ok": True}, headers=_get_cors_headers(request))
+
+    async def handle_admin_seed_builtins(self, request: web.Request):
+        payload = _require_admin(request)
+        guild_id = int(request.match_info["guild_id"])
+        existing = await get_response_groups(guild_id)
+        existing_names = {r[1] for r in existing}
+        seeded = []
+        for group in BUILTIN_GROUPS:
+            if group["name"] not in existing_names:
+                await add_response_group(guild_id, group["name"], group["triggers"], group["responses"])
+                seeded.append(group["name"])
+        await log_admin_action(payload["user_id"], "seed_builtins", guild_id=guild_id,
+                               details=f"seeded: {', '.join(seeded) or 'none (all existed)'}")
+        return web.json_response({"ok": True, "seeded": seeded}, headers=_get_cors_headers(request))
+
+    async def handle_admin_seed_event_texts(self, request: web.Request):
+        payload = _require_admin(request)
+        guild_id = int(request.match_info["guild_id"])
+        await update_server_settings(guild_id, text_overrides=BUILTIN_TEXT_OVERRIDES)
+        await log_admin_action(payload["user_id"], "seed_event_texts", guild_id=guild_id)
+        return web.json_response({"ok": True}, headers=_get_cors_headers(request))
+
+    async def handle_admin_broadcast(self, request: web.Request):
+        payload = _require_admin(request)
+        guild_id = int(request.match_info["guild_id"])
+        try:
+            body = await request.json()
+        except Exception:
+            raise web.HTTPBadRequest(reason="Invalid JSON")
+        message = str(body.get("message", "")).strip()
+        if not message:
+            raise web.HTTPBadRequest(reason="Empty message")
+        guild = self.bot.get_guild(guild_id)
+        if not guild:
+            raise web.HTTPNotFound(reason="Guild not found")
+        all_channel_ids = await get_allowed_channels()
+        guild_channel_ids = {c.id for c in guild.text_channels}
+        target_ids = [cid for cid in all_channel_ids if cid in guild_channel_ids]
+        if not target_ids:
+            raise web.HTTPBadRequest(reason="No allowed channels configured for this guild")
+        sent = 0
+        for cid in target_ids:
+            ch = guild.get_channel(cid)
+            if ch:
+                try:
+                    await ch.send(message)
+                    sent += 1
+                except Exception:
+                    pass
+        await log_admin_action(payload["user_id"], "broadcast", guild_id=guild_id,
+                               details=f"sent to {sent} channel(s)")
+        return web.json_response({"ok": True, "sent_to": sent}, headers=_get_cors_headers(request))
+
+    async def handle_admin_leave_guild(self, request: web.Request):
+        payload = _require_admin(request)
+        guild_id = int(request.match_info["guild_id"])
+        guild = self.bot.get_guild(guild_id)
+        if not guild:
+            raise web.HTTPNotFound(reason="Guild not found")
+        await log_admin_action(payload["user_id"], "leave_guild", guild_id=guild_id,
+                               details=guild.name)
+        await guild.leave()
+        return web.json_response({"ok": True}, headers=_get_cors_headers(request))
+
+    async def handle_admin_user_lookup(self, request: web.Request):
+        _require_admin(request)
+        user_id = int(request.match_info["user_id"])
+        rows = await get_user_all_guilds(user_id)
+        guilds = []
+        for guild_id, balance, chips in rows:
+            g = self.bot.get_guild(guild_id)
+            guilds.append({
+                "guild_id": str(guild_id),
+                "guild_name": g.name if g else str(guild_id),
+                "guild_icon": str(g.icon) if g and g.icon else None,
+                "balance": balance,
+                "chips": chips,
+            })
+        # Try to get Discord user info
+        user_info = {"id": str(user_id), "name": str(user_id), "avatar": None}
+        try:
+            user = self.bot.get_user(user_id) or await self.bot.fetch_user(user_id)
+            if user:
+                user_info = {
+                    "id": str(user.id),
+                    "name": user.name,
+                    "display_name": user.display_name,
+                    "avatar": str(user.display_avatar.url) if user.display_avatar else None,
+                }
+        except Exception:
+            pass
+        return web.json_response({"user": user_info, "guilds": guilds}, headers=_get_cors_headers(request))
+
+    async def handle_admin_get_blocks(self, request: web.Request):
+        _require_admin(request)
+        rows = await get_blocked_users()
+        blocks = []
+        for user_id, reason, blocked_at, blocked_by in rows:
+            user = self.bot.get_user(user_id)
+            admin = self.bot.get_user(blocked_by)
+            blocks.append({
+                "user_id": str(user_id),
+                "username": user.name if user else str(user_id),
+                "avatar": str(user.display_avatar.url) if user and user.display_avatar else None,
+                "reason": reason,
+                "blocked_at": blocked_at,
+                "blocked_by_id": str(blocked_by),
+                "blocked_by_name": admin.name if admin else str(blocked_by),
+            })
+        return web.json_response({"blocks": blocks}, headers=_get_cors_headers(request))
+
+    async def handle_admin_block_user(self, request: web.Request):
+        payload = _require_admin(request)
+        user_id = int(request.match_info["user_id"])
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        reason = str(body.get("reason", "")).strip()
+        await block_user(user_id, reason, blocked_by=payload["user_id"])
+        await log_admin_action(payload["user_id"], "block_user", target_id=user_id, details=reason)
+        return web.json_response({"ok": True}, headers=_get_cors_headers(request))
+
+    async def handle_admin_unblock_user(self, request: web.Request):
+        payload = _require_admin(request)
+        user_id = int(request.match_info["user_id"])
+        await unblock_user(user_id)
+        await log_admin_action(payload["user_id"], "unblock_user", target_id=user_id)
+        return web.json_response({"ok": True}, headers=_get_cors_headers(request))
+
+    async def handle_admin_audit_log(self, request: web.Request):
+        _require_admin(request)
+        limit = int(request.rel_url.query.get("limit", 100))
+        rows = await get_audit_log(limit=min(limit, 500))
+        entries = []
+        for row_id, admin_id, action, guild_id, target_id, details, timestamp in rows:
+            admin = self.bot.get_user(admin_id)
+            entries.append({
+                "id": row_id,
+                "admin_id": str(admin_id),
+                "admin_name": admin.name if admin else str(admin_id),
+                "action": action,
+                "guild_id": str(guild_id) if guild_id else None,
+                "target_id": str(target_id) if target_id else None,
+                "details": details,
+                "timestamp": timestamp,
+            })
+        return web.json_response({"entries": entries}, headers=_get_cors_headers(request))
 
 
 async def setup(bot):

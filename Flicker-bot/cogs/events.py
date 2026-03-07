@@ -6,7 +6,7 @@ import html
 import re
 import time
 from discord.ext import commands
-from database import update_balance, get_allowed_channels, increment_stat, get_server_settings
+from database import update_balance, get_allowed_channels, increment_stat, get_server_settings, is_user_blocked
 
 
 def normalize_answer(text):
@@ -32,6 +32,8 @@ class Events(commands.Cog):
     @commands.Cog.listener()
     async def on_message(self, message):
         if message.author.bot:
+            return
+        if await is_user_blocked(message.author.id):
             return
 
         # Feed active drop events before the is_event_active guard

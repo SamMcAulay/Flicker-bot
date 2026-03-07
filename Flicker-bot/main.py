@@ -3,7 +3,7 @@ import os
 import asyncio
 from discord.ext import commands
 from dotenv import load_dotenv
-from database import init_db, get_server_settings
+from database import init_db, get_server_settings, is_user_blocked
 
 load_dotenv()
 TOKEN = os.getenv('DISCORD_TOKEN')
@@ -39,6 +39,8 @@ bot = FlickerBot()
 
 @bot.check
 async def global_not_disabled(ctx):
+    if await is_user_blocked(ctx.author.id):
+        return False
     if ctx.guild:
         settings = await get_server_settings(ctx.guild.id)
         if settings.get("bot_disabled", False):

@@ -102,6 +102,25 @@ async def init_db():
                 enabled INTEGER DEFAULT 1
             )
         """)
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS blocked_users (
+                user_id    INTEGER PRIMARY KEY,
+                reason     TEXT DEFAULT '',
+                blocked_at INTEGER DEFAULT 0,
+                blocked_by INTEGER DEFAULT 0
+            )
+        """)
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS admin_audit_log (
+                id        INTEGER PRIMARY KEY AUTOINCREMENT,
+                admin_id  INTEGER NOT NULL,
+                action    TEXT NOT NULL,
+                guild_id  INTEGER,
+                target_id INTEGER,
+                details   TEXT DEFAULT '',
+                timestamp INTEGER NOT NULL
+            )
+        """)
         await db.commit()
 
         # Safe migration: add pet streak columns
@@ -670,3 +689,109 @@ async def delete_response_group(group_id: int) -> None:
     async with aiosqlite.connect(DB_NAME) as db:
         await db.execute("DELETE FROM response_groups WHERE id = ?", (group_id,))
         await db.commit()
+
+
+# --- BLOCKED USERS ---
+
+async def block_user(user_id: int, reason: str, blocked_by: int) -> None:
+    import time
+    async with aiosqlite.connect(DB_NAME) as db:
+        await db.execute(
+            "INSERT OR REPLACE INTO blocked_users (user_id, reason, blocked_at, blocked_by) VALUES (?, ?, ?, ?)",
+            (user_id, reason, int(time.time()), blocked_by),
+        )
+        await db.commit()
+
+
+async def unblock_user(user_id: int) -> None:
+    async with aiosqlite.connect(DB_NAME) as db:
+        await db.execute("DELETE FROM blocked_users WHERE user_id = ?", (user_id,))
+        await db.commit()
+
+
+async def get_blocked_users() -> list:
+    async with aiosqlite.connect(DB_NAME) as db:
+        async with db.execute(
+            "SELECT user_id, reason, blocked_at, blocked_by FROM blocked_users ORDER BY blocked_at DESC"
+        ) as cursor:
+            return await cursor.fetchall()
+
+
+async def is_user_blocked(user_id: int) -> bool:
+    async with aiosqlite.connect(DB_NAME) as db:
+        async with db.execute(
+            "SELECT 1 FROM blocked_users WHERE user_id = ?", (user_id,)
+        ) as cursor:
+            return await cursor.fetchone() is not None
+
+
+# --- AUDIT LOG ---
+
+async def log_admin_action(
+    admin_id: int,
+    action: str,
+    guild_id: int = None,
+    target_id: int = None,
+    details: str = "",
+) -> None:
+    import time
+    async with aiosqlite.connect(DB_NAME) as db:
+        await db.execute(
+            "INSERT INTO admin_audit_log (admin_id, action, guild_id, target_id, details, timestamp) VALUES (?, ?, ?, ?, ?, ?)",
+            (admin_id, action, guild_id, target_id, details, int(time.time())),
+        )
+        await db.commit()
+
+
+async def get_audit_log(limit: int = 100) -> list:
+    async with aiosqlite.connect(DB_NAME) as db:
+        async with db.execute(
+            "SELECT id, admin_id, action, guild_id, target_id, details, timestamp FROM admin_audit_log ORDER BY timestamp DESC LIMIT ?",
+            (limit,),
+        ) as cursor:
+            return await cursor.fetchall()
+
+
+# --- ECONOMY ADMIN ---
+
+async def reset_guild_economy(guild_id: int) -> int:
+    """Delete all user_balances rows for a guild. Returns count removed."""
+    async with aiosqlite.connect(DB_NAME) as db:
+        async with db.execute(
+            "SELECT COUNT(*) FROM user_balances WHERE guild_id = ?", (guild_id,)
+        ) as cursor:
+            count = (await cursor.fetchone())[0]
+        await db.execute("DELETE FROM user_balances WHERE guild_id = ?", (guild_id,))
+        await db.commit()
+    return count
+
+
+async def bulk_reward_guild(guild_id: int, balance_delta: int = 0, chips_delta: int = 0) -> int:
+    """Add balance/chips to all users in a guild. Returns number of users affected."""
+    async with aiosqlite.connect(DB_NAME) as db:
+        async with db.execute(
+            "SELECT COUNT(*) FROM user_balances WHERE guild_id = ?", (guild_id,)
+        ) as cursor:
+            count = (await cursor.fetchone())[0]
+        if balance_delta:
+            await db.execute(
+                "UPDATE user_balances SET balance = MAX(0, balance + ?) WHERE guild_id = ?",
+                (balance_delta, guild_id),
+            )
+        if chips_delta:
+            await db.execute(
+                "UPDATE user_balances SET chips = MAX(0, chips + ?) WHERE guild_id = ?",
+                (chips_delta, guild_id),
+            )
+        await db.commit()
+    return count
+
+
+async def get_user_all_guilds(user_id: int) -> list:
+    """Returns list of (guild_id, balance, chips) for a user across all guilds."""
+    async with aiosqlite.connect(DB_NAME) as db:
+        async with db.execute(
+            "SELECT guild_id, balance, chips FROM user_balances WHERE user_id = ? ORDER BY balance DESC",
+            (user_id,),
+        ) as cursor:
+            return await cursor.fetchall()
