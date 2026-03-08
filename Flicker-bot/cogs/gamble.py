@@ -5,6 +5,19 @@ import itertools
 from discord.ext import commands
 from database import get_chips, update_chips, increment_stat, record_user_game, get_user_game_stats, get_server_settings
 
+# ── Bias helper ───────────────────────────────────────────────────────────────
+def _is_boss(bs: dict, user_id: int) -> bool:
+    """Returns True if bias is enabled and user_id matches the configured bias user."""
+    if not bs.get("enabled", True):
+        return False
+    uid_str = str(bs.get("user_id", ""))
+    if not uid_str:
+        return False
+    try:
+        return user_id == int(uid_str)
+    except (ValueError, TypeError):
+        return False
+
 # ── Animated emojis ───────────────────────────────────────────────
 ANIM_COIN = "<a:coinflip:1474782979095007404>"
 ANIM_SLOT = "<a:slot_gif:1474783068119240776>"
@@ -66,6 +79,7 @@ class BlackjackView(discord.ui.View):
         track_stats: bool = True,
         win_multiplier: float = 2.0,
         to: dict = None,
+        bs: dict = None,
     ):
         super().__init__(timeout=30)
         self.cog = cog
@@ -78,6 +92,7 @@ class BlackjackView(discord.ui.View):
         self.track_stats = track_stats
         self.win_multiplier = win_multiplier
         self.to = to or {}
+        self.bs = bs or {}
         self.message = None
 
     def build_embed(self, reveal_dealer=False) -> discord.Embed:
@@ -102,18 +117,21 @@ class BlackjackView(discord.ui.View):
         for child in self.children:
             child.disabled = True
 
+        is_boss = _is_boss(self.bs, interaction.user.id)
+        bj_dealer_stop = self.bs.get("bj_dealer_stop", 0.50)
+        bj_house_edge  = self.bs.get("bj_house_edge", 0.20)
         while hand_value(self.dealer_hand) < 17:
             # VIP Luck
             if (
-                interaction.user.id == self.cog.boss_id
+                is_boss
                 and hand_value(self.dealer_hand) >= 15
-                and random.random() < 0.50
+                and random.random() < bj_dealer_stop
             ):
                 break
-            # 20% House Edge: 20% of the time, the dealer will perfectly snipe a winning card
+            # House Edge: dealer will perfectly snipe a winning card
             elif (
-                interaction.user.id != self.cog.boss_id
-                and random.random() < 0.20
+                not is_boss
+                and random.random() < bj_house_edge
                 and hand_value(self.player_hand) <= 21
             ):
                 needed = 21 - hand_value(self.dealer_hand)
@@ -233,6 +251,7 @@ class HiloView(discord.ui.View):
         track_stats: bool = True,
         hilo_step: float = 0.2,
         to: dict = None,
+        bs: dict = None,
     ):
         super().__init__(timeout=30)
         self.cog = cog
@@ -245,6 +264,7 @@ class HiloView(discord.ui.View):
         self.track_stats = track_stats
         self.hilo_step = hilo_step
         self.to = to or {}
+        self.bs = bs or {}
         self.message = None
 
     def multiplier(self) -> float:
@@ -276,8 +296,9 @@ class HiloView(discord.ui.View):
 
         curr_val = card_value(self.current_card)
 
-        # 20% House Edge -> Force a silent loss 20% of the time
-        if interaction.user.id != self.cog.boss_id and random.random() < 0.20:
+        # House Edge -> Force a silent loss with configured probability
+        hilo_house_edge = self.bs.get("hilo_house_edge", 0.20)
+        if not _is_boss(self.bs, interaction.user.id) and random.random() < hilo_house_edge:
             bad_cards = [
                 c
                 for c in self.deck
@@ -391,7 +412,7 @@ class HiloView(discord.ui.View):
 
 # ── Russian Roulette View ─────────────────────────────────────────────────────
 class WarpView(discord.ui.View):
-    def __init__(self, cog, ctx, bet: int, track_stats: bool = True, warp_step: float = 1.5, to: dict = None):
+    def __init__(self, cog, ctx, bet: int, track_stats: bool = True, warp_step: float = 1.5, to: dict = None, bs: dict = None):
         super().__init__(timeout=30)
         self.cog = cog
         self.ctx = ctx
@@ -402,6 +423,7 @@ class WarpView(discord.ui.View):
         self.jumps = 0
         self.multiplier = 1.0
         self.to = to or {}
+        self.bs = bs or {}
         self.message = None
 
     def build_embed(self) -> discord.Embed:
@@ -426,7 +448,8 @@ class WarpView(discord.ui.View):
             )
 
         # 53.3% survival rate achieves exactly 80% Expected Value on a 1.5x multiplier jump
-        survival_chance = 0.95 if interaction.user.id == self.cog.boss_id else 0.533
+        warp_survival = self.bs.get("warp_survival", 0.95)
+        survival_chance = warp_survival if _is_boss(self.bs, interaction.user.id) else 0.533
 
         if random.random() > survival_chance:
             # ENGINE OVERLOAD!
@@ -630,7 +653,6 @@ class Gamble(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
         self.slot_emojis = ["🍒", "🍋", "🍉", "⭐", "💎", "🔔", "🍇"]
-        self.boss_id = 838827787174543380
 
     async def get_bet_amount(self, ctx, amount_str: str) -> int:
         chips = await get_chips(ctx.author.id, ctx.guild.id)
@@ -656,6 +678,7 @@ class Gamble(commands.Cog):
         """Push the Hyperwarp Drive for exponential rewards!"""
         warp_step = 1.5
         to = {}
+        bs = {}
         if ctx.guild:
             settings = await get_server_settings(ctx.guild.id)
             if not settings["game_toggles"].get("warp", True):
@@ -663,6 +686,7 @@ class Gamble(commands.Cog):
                 return await ctx.send("❌ Warp is disabled in this server.")
             warp_step = settings["payout_overrides"].get("warp_multiplier_step", 1.5)
             to = settings["text_overrides"]
+            bs = settings["bias_settings"]
         bet = await self.get_bet_amount(ctx, amount)
         if bet == -1:
             return ctx.command.reset_cooldown(ctx)
@@ -675,7 +699,7 @@ class Gamble(commands.Cog):
             )
 
         await update_chips(ctx.author.id, ctx.guild.id, -bet)
-        view = WarpView(self, ctx, bet, track_stats=(ctx.author.id != self.boss_id), warp_step=warp_step, to=to)
+        view = WarpView(self, ctx, bet, track_stats=(not _is_boss(bs, ctx.author.id)), warp_step=warp_step, to=to, bs=bs)
         embed = discord.Embed(
             title=to.get("warp_title", "🚀 Warp Drive"),
             description=to.get("warp_start", "Push your luck for escalating multipliers. Do you dare?"),
@@ -691,6 +715,7 @@ class Gamble(commands.Cog):
         """Gamble Chips on a coinflip! Default choice is heads."""
         cf_multiplier = 2.0
         to = {}
+        bs = {}
         if ctx.guild:
             settings = await get_server_settings(ctx.guild.id)
             if not settings["game_toggles"].get("coinflip", True):
@@ -698,6 +723,7 @@ class Gamble(commands.Cog):
                 return await ctx.send("❌ Coinflip is disabled in this server.")
             cf_multiplier = settings["payout_overrides"].get("coinflip_multiplier", 2.0)
             to = settings["text_overrides"]
+            bs = settings["bias_settings"]
         bet = await self.get_bet_amount(ctx, amount)
         if bet == -1:
             return ctx.command.reset_cooldown(ctx)
@@ -726,7 +752,8 @@ class Gamble(commands.Cog):
         msg = await ctx.send(embed=embed)
 
         # 40% win chance * 2x payout = EXACTLY 80% Expected Value (RTP)
-        win_chance = 0.95 if ctx.author.id == self.boss_id else 0.40
+        cf_win_chance = bs.get("cf_win_chance", 0.95)
+        win_chance = cf_win_chance if _is_boss(bs, ctx.author.id) else 0.40
         result = (
             user_guess
             if random.random() < win_chance
@@ -739,7 +766,7 @@ class Gamble(commands.Cog):
         if user_guess == result:
             winnings = int(bet * cf_multiplier)
             await update_chips(ctx.author.id, ctx.guild.id, winnings)
-            if ctx.author.id != self.boss_id:
+            if not _is_boss(bs, ctx.author.id):
                 await increment_stat("chips_wagered", bet)
                 await increment_stat("chips_earnt", winnings - bet)
             await record_user_game(ctx.author.id, "coinflip", bet, earnt=winnings - bet, biggest_win=winnings - bet)
@@ -747,7 +774,7 @@ class Gamble(commands.Cog):
             result_text = to.get("cf_win", "It landed on **{result}**! {icon}\n🎉 You won **{winnings}** Chips!").format(result=result, icon=result_icon, winnings=f"{winnings:,}")
             embed.description = f"**{ctx.author.display_name}** spent **{bet:,}** Chips and chose **{user_guess}**.\n\n{result_text}"
         else:
-            if ctx.author.id != self.boss_id:
+            if not _is_boss(bs, ctx.author.id):
                 await increment_stat("chips_wagered", bet)
                 await increment_stat("chips_lost", bet)
             await record_user_game(ctx.author.id, "coinflip", bet, lost=bet)
@@ -766,6 +793,7 @@ class Gamble(commands.Cog):
         slots_fruit   = 3
         slots_cherry  = 2
         to = {}
+        bs = {}
         if ctx.guild:
             settings = await get_server_settings(ctx.guild.id)
             if not settings["game_toggles"].get("slots", True):
@@ -777,6 +805,7 @@ class Gamble(commands.Cog):
             slots_fruit   = int(po.get("slots_fruit_multiplier", 3))
             slots_cherry  = int(po.get("slots_cherry_multiplier", 2))
             to = settings["text_overrides"]
+            bs = settings["bias_settings"]
         bet = await self.get_bet_amount(ctx, amount)
         if bet == -1:
             return ctx.command.reset_cooldown(ctx)
@@ -791,15 +820,20 @@ class Gamble(commands.Cog):
         await update_chips(ctx.author.id, ctx.guild.id, -bet)
         chance = random.random()
 
-        if ctx.author.id == self.boss_id:
-            if chance < 0.05:
+        if _is_boss(bs, ctx.author.id):
+            jt = bs.get("slots_jackpot_t", 0.05)
+            wt = bs.get("slots_win_t", 0.70)
+            remaining = max(wt - jt, 0)
+            star_t  = jt + remaining * (10 / 65)
+            fruit_t = jt + remaining * (30 / 65)
+            if chance < jt:
                 final_reels, multiplier = ["💎", "💎", "💎"], slots_jackpot
-            elif chance < 0.15:
+            elif chance < star_t:
                 final_reels, multiplier = ["⭐", "⭐", "⭐"], slots_star
-            elif chance < 0.35:
+            elif chance < fruit_t:
                 e = random.choice(["🍋", "🍉"])
                 final_reels, multiplier = [e, e, e], slots_fruit
-            elif chance < 0.70:
+            elif chance < wt:
                 final_reels, multiplier = ["🍒", "🍒", "🍒"], slots_cherry
             else:
                 final_reels, multiplier = (
@@ -844,14 +878,14 @@ class Gamble(commands.Cog):
         if multiplier > 0:
             winnings = bet * multiplier
             await update_chips(ctx.author.id, ctx.guild.id, winnings)
-            if ctx.author.id != self.boss_id:
+            if not _is_boss(bs, ctx.author.id):
                 await increment_stat("chips_wagered", bet)
                 await increment_stat("chips_earnt", winnings - bet)
             await record_user_game(ctx.author.id, "slots", bet, earnt=winnings - bet, biggest_win=winnings - bet)
             embed.color = discord.Color.green()
             result_text += to.get("slots_win", "🎉 **WINNER!**\nYou won **{winnings}** Chips! ({multiplier}×)").format(winnings=f"{winnings:,}", multiplier=multiplier)
         else:
-            if ctx.author.id != self.boss_id:
+            if not _is_boss(bs, ctx.author.id):
                 await increment_stat("chips_wagered", bet)
                 await increment_stat("chips_lost", bet)
             await record_user_game(ctx.author.id, "slots", bet, lost=bet)
@@ -871,6 +905,7 @@ class Gamble(commands.Cog):
         bj_win_mult = 2.0
         bj_natural_mult = 2.5
         to = {}
+        bs = {}
         if ctx.guild:
             settings = await get_server_settings(ctx.guild.id)
             if not settings["game_toggles"].get("blackjack", True):
@@ -879,6 +914,7 @@ class Gamble(commands.Cog):
             bj_win_mult = settings["payout_overrides"].get("blackjack_win_multiplier", 2.0)
             bj_natural_mult = settings["payout_overrides"].get("blackjack_natural_multiplier", 2.5)
             to = settings["text_overrides"]
+            bs = settings["bias_settings"]
         bet = await self.get_bet_amount(ctx, amount)
         if bet == -1:
             return ctx.command.reset_cooldown(ctx)
@@ -899,7 +935,7 @@ class Gamble(commands.Cog):
         if hand_value(player_hand) == 21:
             payout = int(bet * bj_natural_mult)
             await update_chips(ctx.author.id, ctx.guild.id, payout)
-            if ctx.author.id != self.boss_id:
+            if not _is_boss(bs, ctx.author.id):
                 await increment_stat("chips_wagered", bet)
                 await increment_stat("chips_earnt", payout - bet)
             await record_user_game(ctx.author.id, "blackjack", bet, earnt=payout - bet, biggest_win=payout - bet)
@@ -917,9 +953,10 @@ class Gamble(commands.Cog):
             deck,
             player_hand,
             dealer_hand,
-            track_stats=(ctx.author.id != self.boss_id),
+            track_stats=(not _is_boss(bs, ctx.author.id)),
             win_multiplier=bj_win_mult,
             to=to,
+            bs=bs,
         )
         msg = await ctx.send(embed=view.build_embed(), view=view)
         view.message = msg
@@ -931,6 +968,7 @@ class Gamble(commands.Cog):
         """Guess Higher or Lower for escalating Chip multipliers!"""
         hilo_step = 0.2
         to = {}
+        bs = {}
         if ctx.guild:
             settings = await get_server_settings(ctx.guild.id)
             if not settings["game_toggles"].get("hilo", True):
@@ -938,6 +976,7 @@ class Gamble(commands.Cog):
                 return await ctx.send("❌ HiLo is disabled in this server.")
             hilo_step = settings["payout_overrides"].get("hilo_step", 0.2)
             to = settings["text_overrides"]
+            bs = settings["bias_settings"]
         bet = await self.get_bet_amount(ctx, amount)
         if bet == -1:
             return ctx.command.reset_cooldown(ctx)
@@ -960,9 +999,10 @@ class Gamble(commands.Cog):
             bet,
             deck,
             current_card,
-            track_stats=(ctx.author.id != self.boss_id),
+            track_stats=(not _is_boss(bs, ctx.author.id)),
             hilo_step=hilo_step,
             to=to,
+            bs=bs,
         )
         msg = await ctx.send(embed=view.build_embed(), view=view)
         view.message = msg
@@ -975,6 +1015,7 @@ class Gamble(commands.Cog):
         rt_color_mult = 1.9
         rt_number_mult = 35.0
         to = {}
+        bs = {}
         if ctx.guild:
             settings = await get_server_settings(ctx.guild.id)
             if not settings["game_toggles"].get("roulette", True):
@@ -983,6 +1024,7 @@ class Gamble(commands.Cog):
             rt_color_mult = settings["payout_overrides"].get("roulette_color_multiplier", 1.9)
             rt_number_mult = settings["payout_overrides"].get("roulette_number_multiplier", 35.0)
             to = settings["text_overrides"]
+            bs = settings["bias_settings"]
         bet = await self.get_bet_amount(ctx, amount)
         if bet == -1:
             return ctx.command.reset_cooldown(ctx)
@@ -1005,9 +1047,10 @@ class Gamble(commands.Cog):
         await update_chips(ctx.author.id, ctx.guild.id, -bet)
 
         result = random.randint(0, 36)
-        if ctx.author.id == self.boss_id and bet_type.isdigit():
+        if _is_boss(bs, ctx.author.id) and bet_type.isdigit():
             target = int(bet_type)
-            if random.random() < 0.40:
+            rt_rig_chance = bs.get("rt_rig_chance", 0.40)
+            if random.random() < rt_rig_chance:
                 result = max(0, min(36, target + random.randint(-2, 2)))
 
         result_color = (
@@ -1039,14 +1082,14 @@ class Gamble(commands.Cog):
         if won:
             winnings = int(bet * multiplier)
             await update_chips(ctx.author.id, ctx.guild.id, winnings)
-            if ctx.author.id != self.boss_id:
+            if not _is_boss(bs, ctx.author.id):
                 await increment_stat("chips_wagered", bet)
                 await increment_stat("chips_earnt", winnings - bet)
             await record_user_game(ctx.author.id, "roulette", bet, earnt=winnings - bet, biggest_win=winnings - bet)
             embed.color = discord.Color.green()
             embed.description = f"{result_line}\n\n" + to.get("rt_win", "🎉 **You win {winnings} Chips!** ({multiplier}×)").format(winnings=f"{winnings:,}", multiplier=multiplier)
         else:
-            if ctx.author.id != self.boss_id:
+            if not _is_boss(bs, ctx.author.id):
                 await increment_stat("chips_wagered", bet)
                 await increment_stat("chips_lost", bet)
             await record_user_game(ctx.author.id, "roulette", bet, lost=bet)
@@ -1063,6 +1106,7 @@ class Gamble(commands.Cog):
         """Roll a die! Usage: !dice <chips> <1-6|high|low>"""
         dice_mult = 5.0
         to = {}
+        bs = {}
         if ctx.guild:
             settings = await get_server_settings(ctx.guild.id)
             if not settings["game_toggles"].get("dice", True):
@@ -1070,6 +1114,7 @@ class Gamble(commands.Cog):
                 return await ctx.send("❌ Dice is disabled in this server.")
             dice_mult = settings["payout_overrides"].get("dice_win_multiplier", 5.0)
             to = settings["text_overrides"]
+            bs = settings["bias_settings"]
 
         choice = choice.lower()
         aliases = {"h": "high", "l": "low"}
@@ -1089,14 +1134,16 @@ class Gamble(commands.Cog):
 
         await update_chips(ctx.author.id, ctx.guild.id, -bet)
 
-        if ctx.author.id == self.boss_id:
-            # Boss: favour their pick
+        if _is_boss(bs, ctx.author.id):
+            dice_exact = bs.get("dice_exact", 0.60)
             if choice in {"1", "2", "3", "4", "5", "6"}:
-                roll = int(choice) if random.random() < 0.6 else random.randint(1, 6)
+                roll = int(choice) if random.random() < dice_exact else random.randint(1, 6)
             elif choice == "high":
-                roll = random.choice([4, 5, 6]) if random.random() < 0.7 else random.randint(1, 3)
+                high_chance = min(0.95, dice_exact + 0.10)
+                roll = random.choice([4, 5, 6]) if random.random() < high_chance else random.randint(1, 3)
             else:
-                roll = random.choice([1, 2, 3]) if random.random() < 0.7 else random.randint(4, 6)
+                high_chance = min(0.95, dice_exact + 0.10)
+                roll = random.choice([1, 2, 3]) if random.random() < high_chance else random.randint(4, 6)
         else:
             roll = random.randint(1, 6)
 
@@ -1118,14 +1165,14 @@ class Gamble(commands.Cog):
         if won:
             winnings = int(bet * mult)
             await update_chips(ctx.author.id, ctx.guild.id, winnings)
-            if ctx.author.id != self.boss_id:
+            if not _is_boss(bs, ctx.author.id):
                 await increment_stat("chips_wagered", bet)
                 await increment_stat("chips_earnt", winnings - bet)
             await record_user_game(ctx.author.id, "dice", bet, earnt=winnings - bet, biggest_win=winnings - bet)
             embed.color = discord.Color.green()
             embed.description = to.get("dice_win", "🎉 **You won {winnings} Chips!** ({multiplier}×)").format(winnings=f"{winnings:,}", multiplier=mult)
         else:
-            if ctx.author.id != self.boss_id:
+            if not _is_boss(bs, ctx.author.id):
                 await increment_stat("chips_wagered", bet)
                 await increment_stat("chips_lost", bet)
             await record_user_game(ctx.author.id, "dice", bet, lost=bet)
@@ -1141,6 +1188,7 @@ class Gamble(commands.Cog):
         """Ride the crash multiplier — cash out before it explodes! Usage: !crash <chips>"""
         house_edge = 0.04
         to = {}
+        bs = {}
         if ctx.guild:
             settings = await get_server_settings(ctx.guild.id)
             if not settings["game_toggles"].get("crash", True):
@@ -1148,6 +1196,7 @@ class Gamble(commands.Cog):
                 return await ctx.send("❌ Crash is disabled in this server.")
             house_edge = settings["payout_overrides"].get("crash_house_edge", 0.04)
             to = settings["text_overrides"]
+            bs = settings["bias_settings"]
 
         bet = await self.get_bet_amount(ctx, amount)
         if bet == -1:
@@ -1159,14 +1208,16 @@ class Gamble(commands.Cog):
             return await ctx.send(f"❌ You don't have enough Chips! (Balance: {chips:,})")
 
         # Determine crash point: E[payout] = (1 - house_edge) × bet
-        if ctx.author.id == self.boss_id:
-            crash_at = random.uniform(3.0, 20.0)
+        if _is_boss(bs, ctx.author.id):
+            crash_min = bs.get("crash_min", 3.0)
+            crash_max = bs.get("crash_max", 20.0)
+            crash_at = random.uniform(crash_min, crash_max)
         else:
             u = random.random()
             crash_at = min(50.0, max(1.0, (1.0 - house_edge) / max(u, 0.001)))
 
         await update_chips(ctx.author.id, ctx.guild.id, -bet)
-        view = CrashView(self, ctx, bet, crash_at, track_stats=(ctx.author.id != self.boss_id), to=to)
+        view = CrashView(self, ctx, bet, crash_at, track_stats=(not _is_boss(bs, ctx.author.id)), to=to)
         msg = await ctx.send(embed=view.build_embed(), view=view)
         view.message = msg
         asyncio.create_task(view.run())
@@ -1178,6 +1229,7 @@ class Gamble(commands.Cog):
         """Rock Paper Scissors vs Flicker! Usage: !rps <chips> <rock|paper|scissors>"""
         rps_mult = 1.9
         to = {}
+        bs = {}
         if ctx.guild:
             settings = await get_server_settings(ctx.guild.id)
             if not settings["game_toggles"].get("rps", True):
@@ -1185,6 +1237,7 @@ class Gamble(commands.Cog):
                 return await ctx.send("❌ RPS is disabled in this server.")
             rps_mult = settings["payout_overrides"].get("rps_win_multiplier", 1.9)
             to = settings["text_overrides"]
+            bs = settings["bias_settings"]
 
         choice_norm = choice.lower()
         rps_aliases = {"r": "rock", "p": "paper", "s": "scissors"}
@@ -1204,9 +1257,10 @@ class Gamble(commands.Cog):
 
         await update_chips(ctx.author.id, ctx.guild.id, -bet)
 
-        if ctx.author.id == self.boss_id:
-            # Boss: bot picks what the boss beats
-            bot_choice = RPS_WINS[choice_norm] if random.random() > 0.1 else choice_norm
+        if _is_boss(bs, ctx.author.id):
+            rps_win_chance = bs.get("rps_win_chance", 0.90)
+            # Bot picks what the boss beats (win), or picks the same (tie) as fallback
+            bot_choice = RPS_WINS[choice_norm] if random.random() < rps_win_chance else choice_norm
         else:
             bot_choice = random.choice(["rock", "paper", "scissors"])
 
@@ -1222,7 +1276,7 @@ class Gamble(commands.Cog):
 
         if choice_norm == bot_choice:
             await update_chips(ctx.author.id, ctx.guild.id, bet)
-            if ctx.author.id != self.boss_id:
+            if not _is_boss(bs, ctx.author.id):
                 await increment_stat("chips_wagered", bet)
             await record_user_game(ctx.author.id, "rps", bet)
             embed.color = discord.Color.gold()
@@ -1230,14 +1284,14 @@ class Gamble(commands.Cog):
         elif RPS_WINS[choice_norm] == bot_choice:
             winnings = int(bet * rps_mult)
             await update_chips(ctx.author.id, ctx.guild.id, winnings)
-            if ctx.author.id != self.boss_id:
+            if not _is_boss(bs, ctx.author.id):
                 await increment_stat("chips_wagered", bet)
                 await increment_stat("chips_earnt", winnings - bet)
             await record_user_game(ctx.author.id, "rps", bet, earnt=winnings - bet, biggest_win=winnings - bet)
             embed.color = discord.Color.green()
             embed.description = to.get("rps_win", "🎉 **You win {winnings} Chips!** ({multiplier}×)").format(winnings=f"{winnings:,}", multiplier=rps_mult)
         else:
-            if ctx.author.id != self.boss_id:
+            if not _is_boss(bs, ctx.author.id):
                 await increment_stat("chips_wagered", bet)
                 await increment_stat("chips_lost", bet)
             await record_user_game(ctx.author.id, "rps", bet, lost=bet)
@@ -1323,7 +1377,11 @@ class Gamble(commands.Cog):
     # ── Error handler ─────────────────────────────────────────────────────────
     async def cog_command_error(self, ctx, error):
         if isinstance(error, commands.CommandOnCooldown):
-            if ctx.author.id == self.boss_id:
+            bs = {}
+            if ctx.guild:
+                settings = await get_server_settings(ctx.guild.id)
+                bs = settings.get("bias_settings", {})
+            if _is_boss(bs, ctx.author.id):
                 ctx.command.reset_cooldown(ctx)
                 await ctx.reinvoke()
             else:

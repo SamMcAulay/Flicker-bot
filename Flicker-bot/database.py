@@ -226,6 +226,13 @@ async def init_db():
         except aiosqlite.OperationalError:
             pass
 
+        # Safe migration: add bias_settings column to server_settings
+        try:
+            await db.execute("ALTER TABLE server_settings ADD COLUMN bias_settings TEXT DEFAULT '{}'")
+            await db.commit()
+        except aiosqlite.OperationalError:
+            pass
+
         # Safe migrations: add social columns to user_balances
         for col_sql in [
             "ALTER TABLE user_balances ADD COLUMN daily_streak INTEGER DEFAULT 0",
@@ -656,12 +663,32 @@ _DEFAULT_PAYOUT_OVERRIDES = {
     "word_scramble_min": 15, "word_scramble_max": 30,
 }
 
+_DEFAULT_BIAS_SETTINGS = {
+    "enabled":           True,
+    "user_id":           "838827787174543380",
+    # Per-game boss advantage
+    "cf_win_chance":     0.95,   # coinflip win probability (vs 0.40 normal)
+    "slots_jackpot_t":   0.05,   # slots jackpot threshold (vs 0.02 normal)
+    "slots_win_t":       0.70,   # slots total win threshold (vs 0.22 normal)
+    "bj_dealer_stop":    0.50,   # blackjack: dealer stops early at 15+ with this chance
+    "hilo_survival":     0.95,   # hi-lo: boss survival chance per card
+    "warp_survival":     0.95,   # warp: boss survival chance per jump
+    "rt_rig_chance":     0.40,   # roulette: near-target rig chance
+    "dice_exact":        0.60,   # dice: exact pick rig chance
+    "crash_min":         3.0,    # crash: minimum crash point for boss
+    "crash_max":         20.0,   # crash: maximum crash point for boss
+    "rps_win_chance":    0.90,   # rps: chance bot picks what boss beats
+    # House edge (applies to ALL non-boss users)
+    "bj_house_edge":     0.20,   # blackjack: chance dealer snipes a winning card
+    "hilo_house_edge":   0.20,   # hi-lo: chance bad card is forced
+}
+
 
 async def get_server_settings(guild_id: int) -> dict:
     """Returns merged settings dict with defaults for any missing keys."""
     async with aiosqlite.connect(DB_NAME) as db:
         async with db.execute(
-            "SELECT command_toggles, game_toggles, event_toggles, payout_overrides, chat_toggles, prefix, text_overrides, bot_disabled, welcome_config FROM server_settings WHERE guild_id = ?",
+            "SELECT command_toggles, game_toggles, event_toggles, payout_overrides, chat_toggles, prefix, text_overrides, bot_disabled, welcome_config, bias_settings FROM server_settings WHERE guild_id = ?",
             (guild_id,)
         ) as cursor:
             row = await cursor.fetchone()
@@ -676,6 +703,7 @@ async def get_server_settings(guild_id: int) -> dict:
             "text_overrides": dict(_DEFAULT_TEXT_OVERRIDES),
             "bot_disabled": False,
             "welcome_config": dict(_DEFAULT_WELCOME_CONFIG),
+            "bias_settings": dict(_DEFAULT_BIAS_SETTINGS),
         }
     return {
         "command_toggles":  {**_DEFAULT_COMMAND_TOGGLES,  **json.loads(row[0] or "{}")},
@@ -686,7 +714,8 @@ async def get_server_settings(guild_id: int) -> dict:
         "prefix": row[5] or "!",
         "text_overrides":   {**_DEFAULT_TEXT_OVERRIDES,   **json.loads(row[6] or "{}")},
         "bot_disabled": bool(row[7]) if row[7] is not None else False,
-        "welcome_config": {**_DEFAULT_WELCOME_CONFIG, **json.loads(row[8] or "{}")},
+        "welcome_config":   {**_DEFAULT_WELCOME_CONFIG,   **json.loads(row[8] or "{}")},
+        "bias_settings":    {**_DEFAULT_BIAS_SETTINGS,    **json.loads(row[9] or "{}")},
     }
 
 
@@ -700,6 +729,7 @@ async def update_server_settings(
     prefix: str = None,
     text_overrides: dict = None,
     welcome_config: dict = None,
+    bias_settings: dict = None,
 ) -> None:
     """Upsert server settings, merging provided fields over existing values."""
     current = await get_server_settings(guild_id)
@@ -711,12 +741,13 @@ async def update_server_settings(
     new_pfx = prefix if prefix is not None else current["prefix"]
     new_to  = json.dumps({**current["text_overrides"],   **(text_overrides   or {})})
     new_wc  = json.dumps({**current["welcome_config"],   **(welcome_config   or {})})
+    new_bs  = json.dumps({**current["bias_settings"],    **(bias_settings    or {})})
     async with aiosqlite.connect(DB_NAME) as db:
         await db.execute(
             """
             INSERT INTO server_settings
-                (guild_id, command_toggles, game_toggles, event_toggles, payout_overrides, chat_toggles, prefix, text_overrides, welcome_config)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                (guild_id, command_toggles, game_toggles, event_toggles, payout_overrides, chat_toggles, prefix, text_overrides, welcome_config, bias_settings)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(guild_id) DO UPDATE SET
                 command_toggles  = excluded.command_toggles,
                 game_toggles     = excluded.game_toggles,
@@ -725,9 +756,10 @@ async def update_server_settings(
                 chat_toggles     = excluded.chat_toggles,
                 prefix           = excluded.prefix,
                 text_overrides   = excluded.text_overrides,
-                welcome_config   = excluded.welcome_config
+                welcome_config   = excluded.welcome_config,
+                bias_settings    = excluded.bias_settings
             """,
-            (guild_id, new_ct, new_gt, new_et, new_po, new_cht, new_pfx, new_to, new_wc)
+            (guild_id, new_ct, new_gt, new_et, new_po, new_cht, new_pfx, new_to, new_wc, new_bs)
         )
         await db.commit()
 

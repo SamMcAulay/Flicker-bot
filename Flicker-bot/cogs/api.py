@@ -449,6 +449,7 @@ class Api(commands.Cog):
             chat_toggles=body.get("chat_toggles"),
             text_overrides=body.get("text_overrides"),
             welcome_config=body.get("welcome_config"),
+            bias_settings=body.get("bias_settings"),
         )
         return web.json_response({"ok": True}, headers=_get_cors_headers(request))
 
