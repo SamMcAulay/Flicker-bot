@@ -588,17 +588,17 @@ _DEFAULT_TEXT_OVERRIDES = {
     "rt_lose":           "❌ **You lost {bet} Chips.**",
     # Dice
     "dice_title":        "🎲 Dice Roll",
-    "dice_win":          "🎉 **Rolled {result}!** You win **{winnings}** Chips! ({multiplier}×)",
-    "dice_lose":         "❌ **Rolled {result}.** You lost **{bet}** Chips.",
+    "dice_win":          "🎉 **You win {winnings} Chips!** ({multiplier}×)",
+    "dice_lose":         "❌ **You lost {bet} Chips.**",
     # Crash
     "crash_title":       "📈 Crash",
     "crash_cashed_out":  "💰 **Cashed out at {mult}×!** You won **{payout}** Chips!",
     "crash_crashed":     "💥 **CRASHED at {mult}×!** You lost **{bet}** Chips.",
     # RPS
     "rps_title":         "✊ Rock Paper Scissors",
-    "rps_win":           "🎉 You played **{player}** vs **{bot}** — you win **{winnings}** Chips!",
-    "rps_lose":          "❌ You played **{player}** vs **{bot}** — you lost **{bet}** Chips.",
-    "rps_tie":           "🤝 You both played **{player}** — tie! Chips returned.",
+    "rps_win":           "🎉 **You win {winnings} Chips!** ({multiplier}×)",
+    "rps_lose":          "❌ **You lost {bet} Chips.**",
+    "rps_tie":           "🤝 **It's a tie!** Your bet was returned.",
     # Daily
     "daily_claim":       "✅ **Daily claimed!** You received **{reward} Stardust**. (Streak: {streak} 🔥)",
     "daily_cooldown":    "⏰ You already claimed your daily! Come back in **{hours}h {mins}m**.",
