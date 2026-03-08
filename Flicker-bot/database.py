@@ -1119,6 +1119,35 @@ async def get_active_giveaways(guild_id: int = None) -> list:
     return [dict(zip(keys, row)) for row in rows]
 
 
+async def get_active_giveaways_with_counts(guild_id: int = None) -> list:
+    async with aiosqlite.connect(DB_NAME) as db:
+        if guild_id:
+            async with db.execute(
+                """SELECT g.id, g.guild_id, g.channel_id, g.message_id, g.prize_desc, g.end_time,
+                          g.winner_count, g.entry_cost, g.entry_currency, g.creator_id,
+                          COUNT(e.user_id) AS entry_count
+                   FROM giveaways g
+                   LEFT JOIN giveaway_entries e ON e.giveaway_id = g.id
+                   WHERE g.ended = 0 AND g.guild_id = ?
+                   GROUP BY g.id""",
+                (guild_id,),
+            ) as cursor:
+                rows = await cursor.fetchall()
+        else:
+            async with db.execute(
+                """SELECT g.id, g.guild_id, g.channel_id, g.message_id, g.prize_desc, g.end_time,
+                          g.winner_count, g.entry_cost, g.entry_currency, g.creator_id,
+                          COUNT(e.user_id) AS entry_count
+                   FROM giveaways g
+                   LEFT JOIN giveaway_entries e ON e.giveaway_id = g.id
+                   WHERE g.ended = 0
+                   GROUP BY g.id"""
+            ) as cursor:
+                rows = await cursor.fetchall()
+    keys = ["id", "guild_id", "channel_id", "message_id", "prize_desc", "end_time", "winner_count", "entry_cost", "entry_currency", "creator_id", "entry_count"]
+    return [dict(zip(keys, row)) for row in rows]
+
+
 # --- POLLS ---
 
 async def create_poll(guild_id: int, channel_id: int, message_id: int, question: str, options: list) -> int:

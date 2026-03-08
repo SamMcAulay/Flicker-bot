@@ -30,6 +30,9 @@ from database import (
     add_allowed_channel,
     remove_allowed_channel,
     get_allowed_channels,
+    get_active_giveaways_with_counts,
+    end_giveaway,
+    get_active_giveaways,
 )
 
 BUILTIN_GROUPS = [
@@ -260,6 +263,10 @@ class Api(commands.Cog):
         app.router.add_route("OPTIONS", "/admin/guild/{guild_id}/bias", self.handle_preflight)
         app.router.add_get("/admin/guild/{guild_id}/bias", self.handle_admin_get_bias)
         app.router.add_post("/admin/guild/{guild_id}/bias", self.handle_admin_save_bias)
+        app.router.add_route("OPTIONS", "/admin/giveaways", self.handle_preflight)
+        app.router.add_get("/admin/giveaways", self.handle_admin_giveaways)
+        app.router.add_route("OPTIONS", "/admin/giveaways/{giveaway_id}/end", self.handle_preflight)
+        app.router.add_post("/admin/giveaways/{giveaway_id}/end", self.handle_admin_end_giveaway)
 
         self.runner = web.AppRunner(app)
         await self.runner.setup()
@@ -860,6 +867,32 @@ class Api(commands.Cog):
             raise web.HTTPBadRequest(reason="bias_settings must be an object")
         await update_server_settings(guild_id, bias_settings=bias_settings)
         await log_admin_action(payload["user_id"], "update_bias_settings", guild_id=guild_id)
+        return web.json_response({"ok": True}, headers=_get_cors_headers(request))
+
+    async def handle_admin_giveaways(self, request: web.Request):
+        _require_admin(request)
+        giveaways = await get_active_giveaways_with_counts()
+        # Annotate with guild name if bot is available
+        result = []
+        for gaw in giveaways:
+            guild = self.bot.get_guild(gaw["guild_id"])
+            result.append({**gaw, "guild_name": guild.name if guild else str(gaw["guild_id"])})
+        return web.json_response({"giveaways": result}, headers=_get_cors_headers(request))
+
+    async def handle_admin_end_giveaway(self, request: web.Request):
+        payload = _require_admin(request)
+        giveaway_id = int(request.match_info["giveaway_id"])
+        # Find the giveaway across all guilds
+        giveaways = await get_active_giveaways()
+        gaw = next((g for g in giveaways if g["id"] == giveaway_id), None)
+        if not gaw:
+            raise web.HTTPNotFound(reason="Giveaway not found or already ended")
+        social = self.bot.cogs.get("Social")
+        if social:
+            self.bot.loop.create_task(social._end_giveaway(gaw))
+        else:
+            await end_giveaway(giveaway_id)
+        await log_admin_action(payload["user_id"], "force_end_giveaway", details=str(giveaway_id))
         return web.json_response({"ok": True}, headers=_get_cors_headers(request))
 
 
