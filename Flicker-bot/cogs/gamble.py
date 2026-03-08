@@ -1340,7 +1340,9 @@ class Gamble(commands.Cog):
             hint = usage.get(ctx.command.name, f"`!{ctx.command.name} <chips>`")
             await ctx.send(f"❌ Missing argument. Usage: {hint}")
         else:
-            print(f"Gambling Error: {error}")
+            import traceback
+            traceback.print_exc()
+            await ctx.send(f"❌ Unexpected error in `!{ctx.command.name}`: `{error}`")
 
 
 async def setup(bot):
