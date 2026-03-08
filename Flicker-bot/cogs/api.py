@@ -257,6 +257,9 @@ class Api(commands.Cog):
         app.router.add_delete("/admin/blocks/{user_id}", self.handle_admin_unblock_user)
         app.router.add_route("OPTIONS", "/admin/audit-log", self.handle_preflight)
         app.router.add_get("/admin/audit-log", self.handle_admin_audit_log)
+        app.router.add_route("OPTIONS", "/admin/guild/{guild_id}/bias", self.handle_preflight)
+        app.router.add_get("/admin/guild/{guild_id}/bias", self.handle_admin_get_bias)
+        app.router.add_post("/admin/guild/{guild_id}/bias", self.handle_admin_save_bias)
 
         self.runner = web.AppRunner(app)
         await self.runner.setup()
@@ -838,6 +841,26 @@ class Api(commands.Cog):
                 "timestamp": timestamp,
             })
         return web.json_response({"entries": entries}, headers=_get_cors_headers(request))
+
+    async def handle_admin_get_bias(self, request: web.Request):
+        _require_admin(request)
+        guild_id = int(request.match_info["guild_id"])
+        settings = await get_server_settings(guild_id)
+        return web.json_response({"bias_settings": settings["bias_settings"]}, headers=_get_cors_headers(request))
+
+    async def handle_admin_save_bias(self, request: web.Request):
+        payload = _require_admin(request)
+        guild_id = int(request.match_info["guild_id"])
+        try:
+            body = await request.json()
+        except Exception:
+            raise web.HTTPBadRequest(reason="Invalid JSON")
+        bias_settings = body.get("bias_settings")
+        if not isinstance(bias_settings, dict):
+            raise web.HTTPBadRequest(reason="bias_settings must be an object")
+        await update_server_settings(guild_id, bias_settings=bias_settings)
+        await log_admin_action(payload["user_id"], "update_bias_settings", guild_id=guild_id)
+        return web.json_response({"ok": True}, headers=_get_cors_headers(request))
 
 
 async def setup(bot):
