@@ -1139,14 +1139,14 @@ class Gamble(commands.Cog):
     @commands.cooldown(1, 20, commands.BucketType.user)
     async def crash(self, ctx, amount: str):
         """Ride the crash multiplier — cash out before it explodes! Usage: !crash <chips>"""
-        house_edge = 0.05
+        house_edge = 0.04
         to = {}
         if ctx.guild:
             settings = await get_server_settings(ctx.guild.id)
             if not settings["game_toggles"].get("crash", True):
                 ctx.command.reset_cooldown(ctx)
                 return await ctx.send("❌ Crash is disabled in this server.")
-            house_edge = settings["payout_overrides"].get("crash_house_edge", 0.05)
+            house_edge = settings["payout_overrides"].get("crash_house_edge", 0.04)
             to = settings["text_overrides"]
 
         bet = await self.get_bet_amount(ctx, amount)

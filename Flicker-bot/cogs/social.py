@@ -92,9 +92,9 @@ class Social(commands.Cog):
     @commands.command(name="giveaway", aliases=["gaw"])
     @commands.has_permissions(manage_guild=True)
     async def giveaway(self, ctx, duration: str, winners: str = "1", *, prize: str = None):
-        """Start a giveaway. Usage: !giveaway <duration> [winners] [entry_cost:stardust/chips] <prize>
-        Examples: !giveaway 1h 1 500:stardust Free Chips
-                  !giveaway 30m 3 A Cool Prize"""
+        """Start a giveaway. Usage: !giveaway <duration> [winners] [entry_cost:currency] <title> [| description]
+        Examples: !giveaway 1h Nitro | A free month of Discord Nitro!
+                  !giveaway 30m 3 500:stardust Cool Prize | Win something amazing"""
         settings = await get_server_settings(ctx.guild.id)
         if not settings["command_toggles"].get("giveaway", True):
             return await ctx.send("❌ Giveaways are disabled in this server.")
@@ -145,10 +145,21 @@ class Social(commands.Cog):
 
     def _giveaway_embed(self, gaw: dict, ended: bool = False, winners: list = None) -> discord.Embed:
         color = discord.Color.gold() if not ended else discord.Color.greyple()
+        # Support "Title | Description" format in prize_desc
+        prize = gaw["prize_desc"]
+        if "|" in prize:
+            title_part, desc_part = prize.split("|", 1)
+            title_part = title_part.strip()
+            desc_part = desc_part.strip()
+        else:
+            title_part = prize
+            desc_part = None
         embed = discord.Embed(
-            title=f"🎉 GIVEAWAY — {gaw['prize_desc']}",
+            title=f"🎉 GIVEAWAY — {title_part}",
+            description=desc_part,
             color=color,
         )
+        embed.add_field(name="Prize", value=title_part, inline=True)
         embed.add_field(name="Winners", value=str(gaw["winner_count"]), inline=True)
         if gaw["entry_cost"] > 0:
             currency_label = "Stardust" if gaw["entry_currency"] == "stardust" else "Chips"
@@ -199,11 +210,12 @@ class Social(commands.Cog):
             except Exception:
                 pass
 
+        prize_title = gaw["prize_desc"].split("|")[0].strip()
         if winners:
             mentions = " ".join(f"<@{uid}>" for uid in winners)
-            await channel.send(f"🎉 Congratulations {mentions}! You won **{gaw['prize_desc']}**!")
+            await channel.send(f"🎉 Congratulations {mentions}! You won **{prize_title}**!")
         else:
-            await channel.send(f"😔 The giveaway for **{gaw['prize_desc']}** ended with no entries.")
+            await channel.send(f"😔 The giveaway for **{prize_title}** ended with no entries.")
 
     @giveaway.error
     async def giveaway_error(self, ctx, error):

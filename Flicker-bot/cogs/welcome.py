@@ -53,9 +53,15 @@ class Welcome(commands.Cog):
                 color=color,
             )
             embed.set_thumbnail(url=member.display_avatar.url)
-            await channel.send(embed=embed)
+            try:
+                await channel.send(embed=embed)
+            except discord.Forbidden:
+                pass
         else:
-            await channel.send(message)
+            try:
+                await channel.send(message)
+            except discord.Forbidden:
+                pass
 
 
 async def setup(bot):

@@ -605,7 +605,6 @@ _DEFAULT_TEXT_OVERRIDES = {
     "daily_streak_lost": "📅 Your streak was reset. You received **{reward} Stardust**. (New streak: 1 🔥)",
     # Rob
     "rob_success":       "🦝 You snuck **{amount} Stardust** from {victim}!",
-    "rob_fail":          "🚓 You tried to rob {victim} but got away empty-handed.",
     "rob_caught":        "🚔 You were caught robbing {victim} and fined **{fine} Stardust**!",
     "rob_poor":          "💸 {victim} doesn't have enough Stardust to rob.",
     # Rep
@@ -629,7 +628,7 @@ _DEFAULT_PAYOUT_OVERRIDES = {
     "roulette_number_multiplier": 35.0,
     "warp_multiplier_step": 1.5,
     # Dice
-    "dice_win_multiplier": 1.9,
+    "dice_win_multiplier": 5.0,
     # Crash
     "crash_house_edge": 0.04,
     # RPS
