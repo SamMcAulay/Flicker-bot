@@ -6,8 +6,8 @@ from discord.ext import commands
 from database import update_balance, increment_stat, get_pet_data, update_pet_data
 
 STREAK_CAP = 30
-STREAK_WINDOW = 4500       # 1h15m in seconds — upper bound for "on time"
-DECAY_INTERVAL = 720       # lose 5 streak levels per hour past the window
+STREAK_WINDOW = 4500        # 1h15m in seconds — upper bound for "on time"
+DECAY_WINDOW = 5 * 3600     # full streak lost 5 hours past the window (proportional)
 
 MILESTONES = {
     7:  (25,  "🌙 **Streak Milestone!**", "You've been visiting regularly! Flicker saved something special for you."),
@@ -39,10 +39,10 @@ class Pet(commands.Cog):
                 # On time — build streak (uncapped, display grows indefinitely)
                 new_streak = streak + 1
             else:
-                # Late — decay then don't add
-                hours_late = (elapsed - STREAK_WINDOW) / DECAY_INTERVAL
-                decay = math.floor(hours_late)
-                new_streak = max(0, streak - decay)
+                # Late — proportional decay: full streak gone after DECAY_WINDOW seconds
+                past = elapsed - STREAK_WINDOW
+                fraction_remaining = max(0.0, 1.0 - past / DECAY_WINDOW)
+                new_streak = math.floor(streak * fraction_remaining)
 
         streak_bonus = min(new_streak, STREAK_CAP)  # bonus capped at 30
         total_reward = base_reward + streak_bonus
