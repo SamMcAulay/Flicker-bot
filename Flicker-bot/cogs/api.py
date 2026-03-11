@@ -442,11 +442,16 @@ class Api(commands.Cog):
         response_groups = await get_response_groups(guild_id)
 
         # Build bot profile from live guild data
-        avatar_url = ""
+        global_avatar_url = ""
         if self.bot.user:
             av = self.bot.user.display_avatar
-            avatar_url = str(av.url) if av else ""
-        bot_profile = {"nickname": "", "avatar_url": avatar_url}
+            global_avatar_url = str(av.url) if av else ""
+        bot_profile = {
+            "nickname": "",
+            "avatar_url": global_avatar_url,
+            "global_avatar_url": global_avatar_url,
+            "has_guild_avatar": False,
+        }
         guild = self.bot.get_guild(guild_id)
         if guild and guild.me:
             me = guild.me
@@ -454,6 +459,7 @@ class Api(commands.Cog):
             guild_av = getattr(me, "guild_avatar", None)
             if guild_av:
                 bot_profile["avatar_url"] = str(guild_av.url)
+                bot_profile["has_guild_avatar"] = True
 
         data = {
             **settings,
@@ -591,8 +597,10 @@ class Api(commands.Cog):
                     Route("PATCH", "/guilds/{guild_id}/members/@me", guild_id=guild_id),
                     json=http_fields,
                 )
-            except Exception as e:
-                errors.append(str(e))
+            except discord.Forbidden as e:
+                errors.append(f"Missing permissions: {e.text or 'forbidden'}")
+            except discord.HTTPException as e:
+                errors.append(f"Discord error {e.code}: {e.text or str(e)}")
 
         # Prefix — saved to DB
         if "prefix" in body:
