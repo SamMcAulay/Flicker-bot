@@ -202,7 +202,7 @@ class Api(commands.Cog):
         self.runner = None
 
     async def cog_load(self):
-        app = web.Application()
+        app = web.Application(client_max_size=12 * 1024 * 1024)  # 12 MB — needed for base64 avatar uploads
 
         # Public routes
         app.router.add_get("/health", self.handle_health)
