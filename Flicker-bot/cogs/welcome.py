@@ -23,17 +23,19 @@ class Welcome(commands.Cog):
         if not channel:
             return
 
-        message = wc.get("message", "Welcome to **{server}**, {user}! 🎉")
-        message = (
-            message
-            .replace("{user}", member.mention)
-            .replace("{username}", member.display_name)
-            .replace("{server}", member.guild.name)
-            .replace("{count}", str(member.guild.member_count))
-        )
+        def _replace(text: str) -> str:
+            return (
+                text
+                .replace("{user}", member.mention)
+                .replace("{username}", member.display_name)
+                .replace("{server}", member.guild.name)
+                .replace("{count}", str(member.guild.member_count))
+            )
 
-        if wc.get("use_embed", False):
-            color_hex = wc.get("embed_color", "#5865F2")
+        message = _replace(wc.get("message", "Welcome {user} to **{server}**!"))
+
+        if wc.get("use_embed", True):
+            color_hex = wc.get("embed_color", "#5b8ef7")
             try:
                 color = discord.Color(int(color_hex.lstrip("#"), 16))
             except Exception:
@@ -41,18 +43,28 @@ class Welcome(commands.Cog):
 
             title = wc.get("embed_title", "")
             if title:
-                title = (
-                    title
-                    .replace("{username}", member.display_name)
-                    .replace("{server}", member.guild.name)
-                )
+                title = _replace(title)
 
             embed = discord.Embed(
                 title=title or None,
                 description=message,
                 color=color,
             )
-            embed.set_thumbnail(url=member.display_avatar.url)
+
+            # Avatar thumbnail (default on)
+            if wc.get("embed_thumbnail", True):
+                embed.set_thumbnail(url=member.display_avatar.url)
+
+            # Optional footer
+            footer = wc.get("embed_footer", "")
+            if footer:
+                embed.set_footer(text=_replace(footer))
+
+            # Optional large image
+            image_url = wc.get("embed_image_url", "")
+            if image_url:
+                embed.set_image(url=image_url)
+
             try:
                 await channel.send(embed=embed)
             except discord.Forbidden:

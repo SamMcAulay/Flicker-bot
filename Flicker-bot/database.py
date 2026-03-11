@@ -163,6 +163,34 @@ async def init_db():
                 timestamp INTEGER NOT NULL
             )
         """)
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS user_xp (
+                user_id  INTEGER NOT NULL,
+                guild_id INTEGER NOT NULL,
+                xp       INTEGER DEFAULT 0,
+                level    INTEGER DEFAULT 0,
+                PRIMARY KEY (user_id, guild_id)
+            )
+        """)
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS reaction_role_panels (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                guild_id    INTEGER NOT NULL,
+                channel_id  INTEGER NOT NULL,
+                message_id  INTEGER NOT NULL,
+                title       TEXT DEFAULT '',
+                description TEXT DEFAULT ''
+            )
+        """)
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS reaction_role_entries (
+                id       INTEGER PRIMARY KEY AUTOINCREMENT,
+                panel_id INTEGER NOT NULL,
+                emoji    TEXT NOT NULL,
+                role_id  INTEGER NOT NULL,
+                label    TEXT DEFAULT ''
+            )
+        """)
         await db.commit()
 
         # Safe migration: add pet streak columns
@@ -229,6 +257,13 @@ async def init_db():
         # Safe migration: add bias_settings column to server_settings
         try:
             await db.execute("ALTER TABLE server_settings ADD COLUMN bias_settings TEXT DEFAULT '{}'")
+            await db.commit()
+        except aiosqlite.OperationalError:
+            pass
+
+        # Safe migration: add leveling_config column to server_settings
+        try:
+            await db.execute("ALTER TABLE server_settings ADD COLUMN leveling_config TEXT DEFAULT '{}'")
             await db.commit()
         except aiosqlite.OperationalError:
             pass
@@ -532,6 +567,20 @@ _DEFAULT_WELCOME_CONFIG = {
     "embed_title": "Welcome!",
     "embed_color": "#5b8ef7",
     "use_embed": True,
+    "embed_footer": "",
+    "embed_image_url": "",
+    "embed_thumbnail": True,
+}
+_DEFAULT_LEVELING_CONFIG = {
+    "enabled": False,
+    "channel_id": None,
+    "xp_per_message_min": 5,
+    "xp_per_message_max": 15,
+    "xp_cooldown_seconds": 60,
+    "xp_per_level": 100,
+    "announce_levelup": True,
+    "levelup_message": "🎉 {user} just reached **Level {level}**!",
+    "milestones": [],
 }
 _DEFAULT_TEXT_OVERRIDES = {
     # Drop
@@ -688,7 +737,7 @@ async def get_server_settings(guild_id: int) -> dict:
     """Returns merged settings dict with defaults for any missing keys."""
     async with aiosqlite.connect(DB_NAME) as db:
         async with db.execute(
-            "SELECT command_toggles, game_toggles, event_toggles, payout_overrides, chat_toggles, prefix, text_overrides, bot_disabled, welcome_config, bias_settings FROM server_settings WHERE guild_id = ?",
+            "SELECT command_toggles, game_toggles, event_toggles, payout_overrides, chat_toggles, prefix, text_overrides, bot_disabled, welcome_config, bias_settings, leveling_config FROM server_settings WHERE guild_id = ?",
             (guild_id,)
         ) as cursor:
             row = await cursor.fetchone()
@@ -704,6 +753,7 @@ async def get_server_settings(guild_id: int) -> dict:
             "bot_disabled": False,
             "welcome_config": dict(_DEFAULT_WELCOME_CONFIG),
             "bias_settings": dict(_DEFAULT_BIAS_SETTINGS),
+            "leveling_config": dict(_DEFAULT_LEVELING_CONFIG),
         }
     return {
         "command_toggles":  {**_DEFAULT_COMMAND_TOGGLES,  **json.loads(row[0] or "{}")},
@@ -716,6 +766,7 @@ async def get_server_settings(guild_id: int) -> dict:
         "bot_disabled": bool(row[7]) if row[7] is not None else False,
         "welcome_config":   {**_DEFAULT_WELCOME_CONFIG,   **json.loads(row[8] or "{}")},
         "bias_settings":    {**_DEFAULT_BIAS_SETTINGS,    **json.loads(row[9] or "{}")},
+        "leveling_config":  {**_DEFAULT_LEVELING_CONFIG,  **json.loads(row[10] or "{}")},
     }
 
 
@@ -730,6 +781,7 @@ async def update_server_settings(
     text_overrides: dict = None,
     welcome_config: dict = None,
     bias_settings: dict = None,
+    leveling_config: dict = None,
 ) -> None:
     """Upsert server settings, merging provided fields over existing values."""
     current = await get_server_settings(guild_id)
@@ -742,12 +794,14 @@ async def update_server_settings(
     new_to  = json.dumps({**current["text_overrides"],   **(text_overrides   or {})})
     new_wc  = json.dumps({**current["welcome_config"],   **(welcome_config   or {})})
     new_bs  = json.dumps({**current["bias_settings"],    **(bias_settings    or {})})
+    # leveling_config is always fully replaced (milestones array must not be merged)
+    new_lc  = json.dumps(leveling_config if leveling_config is not None else current["leveling_config"])
     async with aiosqlite.connect(DB_NAME) as db:
         await db.execute(
             """
             INSERT INTO server_settings
-                (guild_id, command_toggles, game_toggles, event_toggles, payout_overrides, chat_toggles, prefix, text_overrides, welcome_config, bias_settings)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                (guild_id, command_toggles, game_toggles, event_toggles, payout_overrides, chat_toggles, prefix, text_overrides, welcome_config, bias_settings, leveling_config)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(guild_id) DO UPDATE SET
                 command_toggles  = excluded.command_toggles,
                 game_toggles     = excluded.game_toggles,
@@ -757,9 +811,10 @@ async def update_server_settings(
                 prefix           = excluded.prefix,
                 text_overrides   = excluded.text_overrides,
                 welcome_config   = excluded.welcome_config,
-                bias_settings    = excluded.bias_settings
+                bias_settings    = excluded.bias_settings,
+                leveling_config  = excluded.leveling_config
             """,
-            (guild_id, new_ct, new_gt, new_et, new_po, new_cht, new_pfx, new_to, new_wc, new_bs)
+            (guild_id, new_ct, new_gt, new_et, new_po, new_cht, new_pfx, new_to, new_wc, new_bs, new_lc)
         )
         await db.commit()
 
@@ -1184,3 +1239,123 @@ async def get_user_all_guilds(user_id: int) -> list:
             (user_id,),
         ) as cursor:
             return await cursor.fetchall()
+
+
+# --- LEVELING ---
+
+async def get_user_xp(user_id: int, guild_id: int) -> tuple:
+    """Returns (xp, level)."""
+    async with aiosqlite.connect(DB_NAME) as db:
+        async with db.execute(
+            "SELECT xp, level FROM user_xp WHERE user_id = ? AND guild_id = ?",
+            (user_id, guild_id),
+        ) as cursor:
+            row = await cursor.fetchone()
+    return row if row else (0, 0)
+
+
+async def set_user_xp(user_id: int, guild_id: int, xp: int, level: int) -> None:
+    async with aiosqlite.connect(DB_NAME) as db:
+        await db.execute(
+            """INSERT INTO user_xp (user_id, guild_id, xp, level) VALUES (?, ?, ?, ?)
+               ON CONFLICT(user_id, guild_id) DO UPDATE SET xp = excluded.xp, level = excluded.level""",
+            (user_id, guild_id, xp, level),
+        )
+        await db.commit()
+
+
+async def get_xp_leaderboard(guild_id: int, limit: int = 10) -> list:
+    """Returns list of (user_id, xp, level)."""
+    async with aiosqlite.connect(DB_NAME) as db:
+        async with db.execute(
+            "SELECT user_id, xp, level FROM user_xp WHERE guild_id = ? ORDER BY xp DESC LIMIT ?",
+            (guild_id, limit),
+        ) as cursor:
+            return await cursor.fetchall()
+
+
+# --- REACTION ROLES ---
+
+async def get_reaction_role_panels(guild_id: int) -> list:
+    """Returns list of panel dicts with their entries."""
+    async with aiosqlite.connect(DB_NAME) as db:
+        async with db.execute(
+            "SELECT id, channel_id, message_id, title, description FROM reaction_role_panels WHERE guild_id = ? ORDER BY id",
+            (guild_id,),
+        ) as cursor:
+            panels = await cursor.fetchall()
+        result = []
+        for panel_id, channel_id, message_id, title, description in panels:
+            async with db.execute(
+                "SELECT id, emoji, role_id, label FROM reaction_role_entries WHERE panel_id = ? ORDER BY id",
+                (panel_id,),
+            ) as cursor:
+                entries = await cursor.fetchall()
+            result.append({
+                "id": panel_id,
+                "channel_id": channel_id,
+                "message_id": message_id,
+                "title": title,
+                "description": description,
+                "entries": [{"id": e[0], "emoji": e[1], "role_id": e[2], "label": e[3]} for e in entries],
+            })
+    return result
+
+
+async def get_reaction_role_panel_by_message(message_id: int) -> dict | None:
+    async with aiosqlite.connect(DB_NAME) as db:
+        async with db.execute(
+            "SELECT id, guild_id, channel_id, title, description FROM reaction_role_panels WHERE message_id = ?",
+            (message_id,),
+        ) as cursor:
+            row = await cursor.fetchone()
+        if not row:
+            return None
+        panel_id, guild_id, channel_id, title, description = row
+        async with db.execute(
+            "SELECT id, emoji, role_id, label FROM reaction_role_entries WHERE panel_id = ? ORDER BY id",
+            (panel_id,),
+        ) as cursor:
+            entries = await cursor.fetchall()
+    return {
+        "id": panel_id,
+        "guild_id": guild_id,
+        "channel_id": channel_id,
+        "message_id": message_id,
+        "title": title,
+        "description": description,
+        "entries": [{"id": e[0], "emoji": e[1], "role_id": e[2], "label": e[3]} for e in entries],
+    }
+
+
+async def create_reaction_role_panel(guild_id: int, channel_id: int, message_id: int, title: str, description: str) -> int:
+    async with aiosqlite.connect(DB_NAME) as db:
+        cursor = await db.execute(
+            "INSERT INTO reaction_role_panels (guild_id, channel_id, message_id, title, description) VALUES (?, ?, ?, ?, ?)",
+            (guild_id, channel_id, message_id, title, description),
+        )
+        await db.commit()
+        return cursor.lastrowid
+
+
+async def delete_reaction_role_panel(panel_id: int) -> None:
+    async with aiosqlite.connect(DB_NAME) as db:
+        await db.execute("DELETE FROM reaction_role_entries WHERE panel_id = ?", (panel_id,))
+        await db.execute("DELETE FROM reaction_role_panels WHERE id = ?", (panel_id,))
+        await db.commit()
+
+
+async def add_panel_entry(panel_id: int, emoji: str, role_id: int, label: str) -> int:
+    async with aiosqlite.connect(DB_NAME) as db:
+        cursor = await db.execute(
+            "INSERT INTO reaction_role_entries (panel_id, emoji, role_id, label) VALUES (?, ?, ?, ?)",
+            (panel_id, emoji, role_id, label),
+        )
+        await db.commit()
+        return cursor.lastrowid
+
+
+async def remove_panel_entry(entry_id: int) -> None:
+    async with aiosqlite.connect(DB_NAME) as db:
+        await db.execute("DELETE FROM reaction_role_entries WHERE id = ?", (entry_id,))
+        await db.commit()

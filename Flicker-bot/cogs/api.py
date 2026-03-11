@@ -2,6 +2,7 @@ import os
 import time
 import json
 import jwt
+import discord
 from aiohttp import web, ClientSession
 from discord.ext import commands
 from discord.http import Route
@@ -33,6 +34,12 @@ from database import (
     get_active_giveaways_with_counts,
     end_giveaway,
     get_active_giveaways,
+    get_xp_leaderboard,
+    get_reaction_role_panels,
+    create_reaction_role_panel,
+    delete_reaction_role_panel,
+    add_panel_entry,
+    remove_panel_entry,
 )
 
 BUILTIN_GROUPS = [
@@ -267,6 +274,28 @@ class Api(commands.Cog):
         app.router.add_get("/admin/giveaways", self.handle_admin_giveaways)
         app.router.add_route("OPTIONS", "/admin/giveaways/{giveaway_id}/end", self.handle_preflight)
         app.router.add_post("/admin/giveaways/{giveaway_id}/end", self.handle_admin_end_giveaway)
+
+        # Guild info (channels + roles) for dashboard pickers
+        app.router.add_route("OPTIONS", "/api/guild/{guild_id}/channels", self.handle_preflight)
+        app.router.add_get("/api/guild/{guild_id}/channels", self.handle_guild_channels)
+        app.router.add_route("OPTIONS", "/api/guild/{guild_id}/roles", self.handle_preflight)
+        app.router.add_get("/api/guild/{guild_id}/roles", self.handle_guild_roles)
+
+        # Leveling
+        app.router.add_route("OPTIONS", "/api/leveling/{guild_id}", self.handle_preflight)
+        app.router.add_get("/api/leveling/{guild_id}", self.handle_get_leveling)
+        app.router.add_post("/api/leveling/{guild_id}", self.handle_post_leveling)
+
+        # Reaction roles
+        app.router.add_route("OPTIONS", "/api/reaction-roles/{guild_id}", self.handle_preflight)
+        app.router.add_get("/api/reaction-roles/{guild_id}", self.handle_get_reaction_roles)
+        app.router.add_post("/api/reaction-roles/{guild_id}", self.handle_create_reaction_role_panel)
+        app.router.add_route("OPTIONS", "/api/reaction-roles/{guild_id}/{panel_id}", self.handle_preflight)
+        app.router.add_delete("/api/reaction-roles/{guild_id}/{panel_id}", self.handle_delete_reaction_role_panel)
+        app.router.add_route("OPTIONS", "/api/reaction-roles/{guild_id}/{panel_id}/entries", self.handle_preflight)
+        app.router.add_post("/api/reaction-roles/{guild_id}/{panel_id}/entries", self.handle_add_reaction_role_entry)
+        app.router.add_route("OPTIONS", "/api/reaction-roles/{guild_id}/{panel_id}/entries/{entry_id}", self.handle_preflight)
+        app.router.add_delete("/api/reaction-roles/{guild_id}/{panel_id}/entries/{entry_id}", self.handle_remove_reaction_role_entry)
 
         self.runner = web.AppRunner(app)
         await self.runner.setup()
@@ -893,6 +922,280 @@ class Api(commands.Cog):
         else:
             await end_giveaway(giveaway_id)
         await log_admin_action(payload["user_id"], "force_end_giveaway", details=str(giveaway_id))
+        return web.json_response({"ok": True}, headers=_get_cors_headers(request))
+
+    # ── Guild info (channels / roles) ─────────────────────────────────────────
+
+    async def handle_guild_channels(self, request: web.Request):
+        guild_id = int(request.match_info["guild_id"])
+        _require_auth(request, guild_id)
+        guild = self.bot.get_guild(guild_id)
+        if not guild:
+            raise web.HTTPNotFound(reason="Guild not found")
+        channels = [
+            {"id": str(c.id), "name": c.name}
+            for c in guild.text_channels
+        ]
+        return web.json_response({"channels": channels}, headers=_get_cors_headers(request))
+
+    async def handle_guild_roles(self, request: web.Request):
+        guild_id = int(request.match_info["guild_id"])
+        _require_auth(request, guild_id)
+        guild = self.bot.get_guild(guild_id)
+        if not guild:
+            raise web.HTTPNotFound(reason="Guild not found")
+        roles = [
+            {"id": str(r.id), "name": r.name, "color": str(r.color)}
+            for r in reversed(guild.roles)
+            if not r.is_bot_managed() and r.name != "@everyone"
+        ]
+        return web.json_response({"roles": roles}, headers=_get_cors_headers(request))
+
+    # ── Leveling ──────────────────────────────────────────────────────────────
+
+    async def handle_get_leveling(self, request: web.Request):
+        guild_id = int(request.match_info["guild_id"])
+        _require_auth(request, guild_id)
+        settings = await get_server_settings(guild_id)
+        lc = settings.get("leveling_config", {})
+        lb_rows = await get_xp_leaderboard(guild_id, limit=10)
+        guild = self.bot.get_guild(guild_id)
+        leaderboard = []
+        for uid, xp, level in lb_rows:
+            member = guild.get_member(uid) if guild else None
+            leaderboard.append({
+                "user_id": str(uid),
+                "username": member.display_name if member else str(uid),
+                "avatar": str(member.display_avatar.url) if member else None,
+                "xp": xp,
+                "level": level,
+            })
+        return web.json_response(
+            {"leveling_config": lc, "leaderboard": leaderboard},
+            headers=_get_cors_headers(request),
+        )
+
+    async def handle_post_leveling(self, request: web.Request):
+        guild_id = int(request.match_info["guild_id"])
+        _require_auth(request, guild_id)
+        try:
+            body = await request.json()
+        except Exception:
+            raise web.HTTPBadRequest(reason="Invalid JSON")
+
+        lc = body.get("leveling_config")
+        if not isinstance(lc, dict):
+            raise web.HTTPBadRequest(reason="leveling_config must be an object")
+
+        errors = []
+        # Auto-create Discord roles for milestones that have role_name but no role_id
+        if lc.get("enabled") and lc.get("milestones"):
+            guild = self.bot.get_guild(guild_id)
+            if guild:
+                for milestone in lc["milestones"]:
+                    if milestone.get("role_name") and not milestone.get("role_id"):
+                        try:
+                            role = await guild.create_role(
+                                name=milestone["role_name"],
+                                reason="Flicker leveling milestone role",
+                            )
+                            milestone["role_id"] = role.id
+                        except Exception as e:
+                            errors.append(f"Could not create role '{milestone['role_name']}': {e}")
+
+        await update_server_settings(guild_id, leveling_config=lc)
+        return web.json_response(
+            {"ok": True, "errors": errors, "milestones": lc.get("milestones", [])},
+            headers=_get_cors_headers(request),
+        )
+
+    # ── Reaction Roles ────────────────────────────────────────────────────────
+
+    async def handle_get_reaction_roles(self, request: web.Request):
+        guild_id = int(request.match_info["guild_id"])
+        _require_auth(request, guild_id)
+        panels = await get_reaction_role_panels(guild_id)
+        # Serialize role_id / message_id as strings for JS
+        for panel in panels:
+            panel["message_id"] = str(panel["message_id"])
+            for entry in panel["entries"]:
+                entry["role_id"] = entry["role_id"]  # keep as int for JS matching
+        return web.json_response({"panels": panels}, headers=_get_cors_headers(request))
+
+    async def handle_create_reaction_role_panel(self, request: web.Request):
+        guild_id = int(request.match_info["guild_id"])
+        _require_auth(request, guild_id)
+        try:
+            body = await request.json()
+        except Exception:
+            raise web.HTTPBadRequest(reason="Invalid JSON")
+
+        channel_id = int(body.get("channel_id", 0))
+        title = str(body.get("title", "")).strip()
+        description = str(body.get("description", "")).strip()
+        if not channel_id:
+            raise web.HTTPBadRequest(reason="channel_id required")
+
+        guild = self.bot.get_guild(guild_id)
+        if not guild:
+            raise web.HTTPNotFound(reason="Guild not found")
+        channel = guild.get_channel(channel_id)
+        if not channel:
+            raise web.HTTPNotFound(reason="Channel not found")
+
+        embed = discord.Embed(
+            title=title or "Reaction Roles",
+            description=description or "React below to get a role!",
+            color=discord.Color.from_rgb(91, 142, 247),
+        )
+        embed.set_footer(text="React to assign or remove a role.")
+        try:
+            msg = await channel.send(embed=embed)
+        except discord.Forbidden:
+            raise web.HTTPForbidden(reason="Bot cannot send messages in that channel")
+
+        panel_id = await create_reaction_role_panel(guild_id, channel_id, msg.id, title, description)
+        return web.json_response(
+            {"ok": True, "panel_id": panel_id, "message_id": str(msg.id)},
+            status=201,
+            headers=_get_cors_headers(request),
+        )
+
+    async def handle_delete_reaction_role_panel(self, request: web.Request):
+        guild_id = int(request.match_info["guild_id"])
+        _require_auth(request, guild_id)
+        panel_id = int(request.match_info["panel_id"])
+
+        panels = await get_reaction_role_panels(guild_id)
+        panel = next((p for p in panels if p["id"] == panel_id), None)
+        if not panel:
+            raise web.HTTPNotFound(reason="Panel not found")
+
+        # Try to delete the Discord message
+        guild = self.bot.get_guild(guild_id)
+        if guild:
+            channel = guild.get_channel(panel["channel_id"])
+            if channel:
+                try:
+                    msg = await channel.fetch_message(panel["message_id"])
+                    await msg.delete()
+                except Exception:
+                    pass
+
+        await delete_reaction_role_panel(panel_id)
+
+        # Invalidate reaction roles cache
+        rr_cog = self.bot.cogs.get("ReactionRoles")
+        if rr_cog:
+            rr_cog.invalidate_cache(panel["message_id"])
+
+        return web.json_response({"ok": True}, headers=_get_cors_headers(request))
+
+    async def handle_add_reaction_role_entry(self, request: web.Request):
+        guild_id = int(request.match_info["guild_id"])
+        _require_auth(request, guild_id)
+        panel_id = int(request.match_info["panel_id"])
+        try:
+            body = await request.json()
+        except Exception:
+            raise web.HTTPBadRequest(reason="Invalid JSON")
+
+        emoji = str(body.get("emoji", "")).strip()
+        role_id = int(body.get("role_id", 0))
+        label = str(body.get("label", "")).strip()
+        if not emoji or not role_id:
+            raise web.HTTPBadRequest(reason="emoji and role_id are required")
+
+        panels = await get_reaction_role_panels(guild_id)
+        panel = next((p for p in panels if p["id"] == panel_id), None)
+        if not panel:
+            raise web.HTTPNotFound(reason="Panel not found")
+
+        entry_id = await add_panel_entry(panel_id, emoji, role_id, label)
+
+        # Update the Discord message embed and add the reaction
+        guild = self.bot.get_guild(guild_id)
+        if guild:
+            channel = guild.get_channel(panel["channel_id"])
+            if channel:
+                try:
+                    msg = await channel.fetch_message(panel["message_id"])
+                    await msg.add_reaction(emoji)
+                    # Rebuild embed description from all entries (including new one)
+                    all_entries = panel["entries"] + [{"emoji": emoji, "role_id": role_id, "label": label}]
+                    embed = msg.embeds[0].copy() if msg.embeds else discord.Embed(title=panel["title"] or "Reaction Roles")
+                    lines = [panel.get("description", "") or "React below to get a role!"]
+                    for e in all_entries:
+                        role = guild.get_role(e["role_id"])
+                        role_mention = role.mention if role else f"<@&{e['role_id']}>"
+                        line = f"{e['emoji']} → {role_mention}"
+                        if e.get("label"):
+                            line += f" — {e['label']}"
+                        lines.append(line)
+                    embed.description = "\n".join(lines)
+                    await msg.edit(embed=embed)
+                except Exception:
+                    pass
+
+        # Invalidate cache so the reaction listener picks up the new entry
+        rr_cog = self.bot.cogs.get("ReactionRoles")
+        if rr_cog:
+            rr_cog.invalidate_cache(panel["message_id"])
+
+        return web.json_response(
+            {"ok": True, "entry_id": entry_id},
+            status=201,
+            headers=_get_cors_headers(request),
+        )
+
+    async def handle_remove_reaction_role_entry(self, request: web.Request):
+        guild_id = int(request.match_info["guild_id"])
+        _require_auth(request, guild_id)
+        panel_id = int(request.match_info["panel_id"])
+        entry_id = int(request.match_info["entry_id"])
+
+        panels = await get_reaction_role_panels(guild_id)
+        panel = next((p for p in panels if p["id"] == panel_id), None)
+        if not panel:
+            raise web.HTTPNotFound(reason="Panel not found")
+        entry = next((e for e in panel["entries"] if e["id"] == entry_id), None)
+        if not entry:
+            raise web.HTTPNotFound(reason="Entry not found")
+
+        await remove_panel_entry(entry_id)
+
+        # Update Discord message: remove reaction and rebuild embed
+        guild = self.bot.get_guild(guild_id)
+        if guild:
+            channel = guild.get_channel(panel["channel_id"])
+            if channel:
+                try:
+                    msg = await channel.fetch_message(panel["message_id"])
+                    try:
+                        await msg.clear_reaction(entry["emoji"])
+                    except Exception:
+                        pass
+                    # Rebuild embed from remaining entries
+                    remaining = [e for e in panel["entries"] if e["id"] != entry_id]
+                    embed = msg.embeds[0].copy() if msg.embeds else discord.Embed(title=panel["title"] or "Reaction Roles")
+                    lines = [panel.get("description", "") or "React below to get a role!"]
+                    for e in remaining:
+                        role = guild.get_role(e["role_id"])
+                        role_mention = role.mention if role else f"<@&{e['role_id']}>"
+                        line = f"{e['emoji']} → {role_mention}"
+                        if e.get("label"):
+                            line += f" — {e['label']}"
+                        lines.append(line)
+                    embed.description = "\n".join(lines)
+                    await msg.edit(embed=embed)
+                except Exception:
+                    pass
+
+        # Invalidate cache
+        rr_cog = self.bot.cogs.get("ReactionRoles")
+        if rr_cog:
+            rr_cog.invalidate_cache(panel["message_id"])
+
         return web.json_response({"ok": True}, headers=_get_cors_headers(request))
 
 
