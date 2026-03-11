@@ -202,7 +202,20 @@ class Api(commands.Cog):
         self.runner = None
 
     async def cog_load(self):
-        app = web.Application(client_max_size=12 * 1024 * 1024)  # 12 MB — needed for base64 avatar uploads
+        allowed_origin = os.getenv("DASHBOARD_ORIGIN", "*")
+
+        @web.middleware
+        async def cors_middleware(request, handler):
+            try:
+                response = await handler(request)
+            except web.HTTPException as ex:
+                response = ex
+            response.headers["Access-Control-Allow-Origin"] = allowed_origin
+            response.headers["Access-Control-Allow-Methods"] = "GET, POST, PATCH, DELETE, OPTIONS"
+            response.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization"
+            return response
+
+        app = web.Application(middlewares=[cors_middleware], client_max_size=12 * 1024 * 1024)  # 12 MB — needed for base64 avatar uploads
 
         # Public routes
         app.router.add_get("/health", self.handle_health)
