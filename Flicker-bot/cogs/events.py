@@ -127,6 +127,7 @@ class Events(commands.Cog):
         rewards = [random.randint(lo, hi) for lo, hi in reward_ranges]
 
         timeout_drop = int(po.get("drop_timeout", 15))
+        delete_timeout = int(po.get("drop_delete_timeout", 15))
         catch_prompt = to.get("drop_catch_prompt", "type **catch**!")
 
         def build_embed(catchers):
@@ -145,6 +146,23 @@ class Events(commands.Cog):
                 color=discord.Color.magenta()
             )
             embed.set_footer(text=f"{timeout_drop} seconds to catch!")
+            return embed
+
+        def build_final_embed(catchers):
+            if catchers:
+                slots = [f"**#{i + 1}** {user.mention} — **{rewards[i]} ✨**" for i, user in enumerate(catchers)]
+                embed = discord.Embed(
+                    title="The dust has settled!",
+                    description="\n".join(slots),
+                    color=discord.Color.green()
+                )
+            else:
+                embed = discord.Embed(
+                    title=to.get("drop_title", "A reward dropped!"),
+                    description="**Too slow!** The reward disappeared.",
+                    color=discord.Color.red()
+                )
+            embed.set_footer(text=f"Deleting in {delete_timeout}s…")
             return embed
 
         catchers = []
@@ -178,10 +196,15 @@ class Events(commands.Cog):
                 await update_balance(user.id, guild_id, reward)
                 await increment_stat("stardust_earned", reward)
                 await increment_stat("games_correct")
-            await channel.send(to.get("drop_win", "**All done!**"))
         else:
             await increment_stat("games_wrong")
-            await channel.send(to.get("drop_lose", "**Too slow!** The reward disappeared."))
+
+        await msg.edit(embed=build_final_embed(catchers))
+        await asyncio.sleep(delete_timeout)
+        try:
+            await msg.delete()
+        except discord.NotFound:
+            pass
 
     async def event_fast_type(self, channel):
         guild_id = channel.guild.id if channel.guild else None
