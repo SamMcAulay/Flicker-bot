@@ -28,6 +28,7 @@ class Events(commands.Cog):
         self.drop_queue = None
         self.drop_channel = None
         self.drop_caught_ids = set()
+        self.drop_catch_messages = []
 
     @commands.Cog.listener()
     async def on_message(self, message):
@@ -42,6 +43,7 @@ class Events(commands.Cog):
                 and message.content.lower().strip() == "catch"
                 and message.author.id not in self.drop_caught_ids):
             self.drop_caught_ids.add(message.author.id)
+            self.drop_catch_messages.append(message)
             await self.drop_queue.put(message.author)
             return
 
@@ -171,6 +173,7 @@ class Events(commands.Cog):
         self.drop_queue = asyncio.Queue()
         self.drop_channel = channel
         self.drop_caught_ids = set()
+        self.drop_catch_messages = []
 
         try:
             deadline = asyncio.get_event_loop().time() + float(timeout_drop)
@@ -185,9 +188,11 @@ class Events(commands.Cog):
                 except asyncio.TimeoutError:
                     break
         finally:
+            catch_msgs = list(self.drop_catch_messages)
             self.drop_queue = None
             self.drop_channel = None
             self.drop_caught_ids = set()
+            self.drop_catch_messages = []
 
         guild_id = channel.guild.id if channel.guild else 0
         if catchers:
@@ -201,10 +206,21 @@ class Events(commands.Cog):
 
         await msg.edit(embed=build_final_embed(catchers))
         await asyncio.sleep(delete_timeout)
-        try:
-            await msg.delete()
-        except discord.NotFound:
-            pass
+        to_delete = [msg] + catch_msgs
+        for m in to_delete:
+            try:
+                await m.delete()
+            except discord.NotFound:
+                pass
+
+    async def _cleanup_messages(self, messages, delay):
+        """Delete a list of messages after a delay."""
+        await asyncio.sleep(delay)
+        for m in messages:
+            try:
+                await m.delete()
+            except discord.NotFound:
+                pass
 
     async def event_fast_type(self, channel):
         guild_id = channel.guild.id if channel.guild else None
@@ -212,6 +228,7 @@ class Events(commands.Cog):
         po = settings.get("payout_overrides", {})
         to = settings.get("text_overrides", {})
         reward = random.randint(int(po.get("fast_type_min", 10)), int(po.get("fast_type_max", 20)))
+        delete_timeout = int(po.get("fast_type_delete_timeout", 15))
         chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
         target_code = f"{''.join(random.choices(chars, k=3))}-{''.join(random.choices(chars, k=3))}"
         display_code = "\u200b".join(target_code)  # zero-width spaces prevent copy-paste on mobile
@@ -219,18 +236,23 @@ class Events(commands.Cog):
         embed = discord.Embed(title=to.get("fast_type_title", "⌨️ Type it Quick!"), description=f"{desc}\n\n**{display_code}**", color=discord.Color.gold())
         timeout = int(po.get("fast_type_timeout", 10))
         embed.set_footer(text=f"You have {timeout} seconds! Reward: {reward} Stardust")
-        await channel.send(embed=embed)
+        prompt_msg = await channel.send(embed=embed)
+        to_delete = [prompt_msg]
         def check(m): return m.channel == channel and not m.author.bot and m.content == target_code
         guild_id = channel.guild.id if channel.guild else 0
         try:
             winner = await self.bot.wait_for('message', check=check, timeout=float(timeout))
+            to_delete.append(winner)
             await update_balance(winner.author.id, guild_id, reward)
             await increment_stat("stardust_earned", reward)
             await increment_stat("games_correct")
-            await channel.send(to.get("fast_type_win", "✅ **Got it!** {winner} earned **{reward} Stardust**!").format(winner=winner.author.mention, reward=reward))
+            result_msg = await channel.send(to.get("fast_type_win", "✅ **Got it!** {winner} earned **{reward} Stardust**! Deleting in {delete}s…").format(winner=winner.author.mention, reward=reward, delete=delete_timeout))
+            to_delete.append(result_msg)
         except asyncio.TimeoutError:
             await increment_stat("games_wrong")
-            await channel.send(to.get("fast_type_lose", "⏰ **Time's up!** The code was `{code}`.").format(code=target_code))
+            result_msg = await channel.send(to.get("fast_type_lose", "⏰ **Time's up!** The code was `{code}`. Deleting in {delete}s…").format(code=target_code, delete=delete_timeout))
+            to_delete.append(result_msg)
+        await self._cleanup_messages(to_delete, delete_timeout)
 
     async def event_math(self, channel):
         guild_id = channel.guild.id if channel.guild else None
@@ -238,6 +260,7 @@ class Events(commands.Cog):
         po = settings.get("payout_overrides", {})
         to = settings.get("text_overrides", {})
         reward = random.randint(int(po.get("math_min", 20)), int(po.get("math_max", 40)))
+        delete_timeout = int(po.get("math_delete_timeout", 15))
         a, b, c = random.randint(2, 9), random.randint(10, 20), random.randint(1, 50)
         op_type = random.choice(["mul_add", "sub_add"])
         if op_type == "mul_add": equation, answer = f"{a} × {b} + {c}", (a * b) + c
@@ -246,18 +269,23 @@ class Events(commands.Cog):
         embed = discord.Embed(title=to.get("math_title", "🧮 Math Challenge!"), description=f"{desc}\n\n**{equation}**", color=discord.Color.teal())
         timeout = int(po.get("math_timeout", 12))
         embed.set_footer(text=f"You have {timeout} seconds! Reward: {reward} Stardust")
-        await channel.send(embed=embed)
+        prompt_msg = await channel.send(embed=embed)
+        to_delete = [prompt_msg]
         def check(m): return m.channel == channel and not m.author.bot and m.content == str(answer)
         guild_id = channel.guild.id if channel.guild else 0
         try:
             winner = await self.bot.wait_for('message', check=check, timeout=float(timeout))
+            to_delete.append(winner)
             await update_balance(winner.author.id, guild_id, reward)
             await increment_stat("stardust_earned", reward)
             await increment_stat("games_correct")
-            await channel.send(to.get("math_win", "✅ **Correct!** {winner} solved it and earned **{reward} Stardust**!").format(winner=winner.author.mention, reward=reward))
+            result_msg = await channel.send(to.get("math_win", "✅ **Correct!** {winner} solved it and earned **{reward} Stardust**! Deleting in {delete}s…").format(winner=winner.author.mention, reward=reward, delete=delete_timeout))
+            to_delete.append(result_msg)
         except asyncio.TimeoutError:
             await increment_stat("games_wrong")
-            await channel.send(to.get("math_lose", "⏰ **Time's up!** The answer was **{answer}**.").format(answer=answer))
+            result_msg = await channel.send(to.get("math_lose", "⏰ **Time's up!** The answer was **{answer}**. Deleting in {delete}s…").format(answer=answer, delete=delete_timeout))
+            to_delete.append(result_msg)
+        await self._cleanup_messages(to_delete, delete_timeout)
 
     async def event_trivia(self, channel):
         guild_id = channel.guild.id if channel.guild else None
@@ -265,6 +293,7 @@ class Events(commands.Cog):
         po = settings.get("payout_overrides", {})
         to = settings.get("text_overrides", {})
         reward = random.randint(int(po.get("trivia_min", 50)), int(po.get("trivia_max", 100)))
+        delete_timeout = int(po.get("trivia_delete_timeout", 15))
         url = "https://opentdb.com/api.php?amount=1&category=17&type=multiple"
         async with aiohttp.ClientSession() as session:
             async with session.get(url) as response:
@@ -282,7 +311,8 @@ class Events(commands.Cog):
                     embed = discord.Embed(title=to.get("trivia_title", "❓ Trivia Time!"), description=f"{question}\n\n{opts_text}\n{tagline}", color=discord.Color.purple())
                     timeout = int(po.get("trivia_timeout", 30))
                     embed.set_footer(text=f"You have {timeout} seconds! Reward: {reward} Stardust")
-                    await channel.send(embed=embed)
+                    prompt_msg = await channel.send(embed=embed)
+                    to_delete = [prompt_msg]
                     valid_letters = ["a", "b", "c", "d"]
                     normalized_opts = [normalize_answer(o) for o in all_opts]
                     def check(m):
@@ -291,17 +321,21 @@ class Events(commands.Cog):
                     guild_id = channel.guild.id if channel.guild else 0
                     try:
                         msg = await self.bot.wait_for('message', check=check, timeout=float(timeout))
+                        to_delete.append(msg)
                         if msg.content.lower().strip() == correct_let.lower() or normalize_answer(msg.content) == normalize_answer(correct):
                             await update_balance(msg.author.id, guild_id, reward)
                             await increment_stat("stardust_earned", reward)
                             await increment_stat("games_correct")
-                            await channel.send(to.get("trivia_correct", "🎉 **Correct!** The answer was **{answer}**. {winner} earned **{reward} Stardust**!").format(answer=correct, winner=msg.author.mention, reward=reward))
+                            result_msg = await channel.send(to.get("trivia_correct", "🎉 **Correct!** The answer was **{answer}**. {winner} earned **{reward} Stardust**! Deleting in {delete}s…").format(answer=correct, winner=msg.author.mention, reward=reward, delete=delete_timeout))
                         else:
                             await increment_stat("games_wrong")
-                            await channel.send(to.get("trivia_wrong", "❌ **Wrong!** The answer was **{answer}**.").format(answer=correct))
+                            result_msg = await channel.send(to.get("trivia_wrong", "❌ **Wrong!** The answer was **{answer}**. Deleting in {delete}s…").format(answer=correct, delete=delete_timeout))
+                        to_delete.append(result_msg)
                     except asyncio.TimeoutError:
                         await increment_stat("games_wrong")
-                        await channel.send(to.get("trivia_timeout", "⏰ **Time's up!** The answer was **{answer}**.").format(answer=correct))
+                        result_msg = await channel.send(to.get("trivia_timeout", "⏰ **Time's up!** The answer was **{answer}**. Deleting in {delete}s…").format(answer=correct, delete=delete_timeout))
+                        to_delete.append(result_msg)
+                    await self._cleanup_messages(to_delete, delete_timeout)
 
     async def event_word_scramble(self, channel):
         guild_id = channel.guild.id if channel.guild else None
@@ -309,6 +343,7 @@ class Events(commands.Cog):
         po = settings.get("payout_overrides", {})
         to = settings.get("text_overrides", {})
         reward = random.randint(int(po.get("word_scramble_min", 15)), int(po.get("word_scramble_max", 30)))
+        delete_timeout = int(po.get("word_scramble_delete_timeout", 15))
         word = random.choice(SCRAMBLE_WORDS)
 
         # Scramble until different from original
@@ -331,7 +366,8 @@ class Events(commands.Cog):
         )
         timeout = int(po.get("word_scramble_timeout", 20))
         embed.set_footer(text=f"You have {timeout} seconds! Reward: {reward} Stardust")
-        await channel.send(embed=embed)
+        prompt_msg = await channel.send(embed=embed)
+        to_delete = [prompt_msg]
 
         def check(m):
             return m.channel == channel and not m.author.bot and m.content.lower().strip() == word
@@ -339,13 +375,17 @@ class Events(commands.Cog):
         guild_id = channel.guild.id if channel.guild else 0
         try:
             winner = await self.bot.wait_for("message", check=check, timeout=float(timeout))
+            to_delete.append(winner)
             await update_balance(winner.author.id, guild_id, reward)
             await increment_stat("stardust_earned", reward)
             await increment_stat("games_correct")
-            await channel.send(to.get("scramble_win", "✅ **Nice work!** {winner} unscrambled **{word}** and earned **{reward} Stardust**!").format(winner=winner.author.mention, word=word, reward=reward))
+            result_msg = await channel.send(to.get("scramble_win", "✅ **Nice work!** {winner} unscrambled **{word}** and earned **{reward} Stardust**! Deleting in {delete}s…").format(winner=winner.author.mention, word=word, reward=reward, delete=delete_timeout))
+            to_delete.append(result_msg)
         except asyncio.TimeoutError:
             await increment_stat("games_wrong")
-            await channel.send(to.get("scramble_lose", "⏰ **Time's up!** The word was **{word}**.").format(word=word))
+            result_msg = await channel.send(to.get("scramble_lose", "⏰ **Time's up!** The word was **{word}**. Deleting in {delete}s…").format(word=word, delete=delete_timeout))
+            to_delete.append(result_msg)
+        await self._cleanup_messages(to_delete, delete_timeout)
 
 
 async def setup(bot):
