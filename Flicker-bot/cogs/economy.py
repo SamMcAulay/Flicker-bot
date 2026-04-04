@@ -1,4 +1,5 @@
 import discord
+import asyncio
 from discord.ext import commands
 from database import get_balance, update_balance, get_chips, update_chips, get_top_users, get_server_settings
 
@@ -107,9 +108,15 @@ class Economy(commands.Cog):
         if not ctx.guild:
             return await ctx.send("❌ This command can only be used in a server.")
         new_bal = await update_balance(member.id, ctx.guild.id, amount)
-        await ctx.send(
+        reply = await ctx.send(
             f"💰 Added **{amount}** Stardust to {member.mention}. New balance: **{new_bal}**"
         )
+        await asyncio.sleep(30)
+        for msg in [ctx.message, reply]:
+            try:
+                await msg.delete()
+            except discord.NotFound:
+                pass
 
     @commands.group(name="chips", invoke_without_command=True)
     async def chips_cmd(self, ctx):
