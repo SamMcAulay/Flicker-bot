@@ -191,6 +191,65 @@ async def init_db():
                 label    TEXT DEFAULT ''
             )
         """)
+
+        # ── Support Ticket System ──
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS ticket_config (
+                guild_id           INTEGER PRIMARY KEY,
+                enabled            INTEGER DEFAULT 0,
+                log_channel_id     INTEGER DEFAULT 0,
+                category_id        INTEGER DEFAULT 0,
+                naming_format      TEXT    DEFAULT 'ticket-{number}',
+                next_ticket_number INTEGER DEFAULT 1,
+                dm_transcript      INTEGER DEFAULT 0,
+                claim_lock         INTEGER DEFAULT 0
+            )
+        """)
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS ticket_panels (
+                id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                guild_id     INTEGER NOT NULL,
+                channel_id   INTEGER NOT NULL,
+                message_id   INTEGER NOT NULL,
+                title        TEXT    DEFAULT 'Support Tickets',
+                description  TEXT    DEFAULT 'Click below to open a ticket.',
+                color        INTEGER DEFAULT 5865207,
+                button_label TEXT    DEFAULT 'Open Ticket',
+                button_emoji TEXT    DEFAULT '🎫',
+                button_style INTEGER DEFAULT 1
+            )
+        """)
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS ticket_categories (
+                id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                panel_id        INTEGER NOT NULL,
+                name            TEXT    NOT NULL,
+                emoji           TEXT    DEFAULT '📩',
+                description     TEXT    DEFAULT '',
+                opening_message TEXT    DEFAULT '',
+                staff_roles     TEXT    DEFAULT '[]',
+                ticket_limit    INTEGER DEFAULT 1,
+                form_fields     TEXT    DEFAULT '[]'
+            )
+        """)
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS support_tickets (
+                id             INTEGER PRIMARY KEY AUTOINCREMENT,
+                guild_id       INTEGER NOT NULL,
+                channel_id     INTEGER NOT NULL,
+                user_id        INTEGER NOT NULL,
+                category_id    INTEGER NOT NULL,
+                panel_id       INTEGER NOT NULL,
+                ticket_number  INTEGER NOT NULL,
+                claimed_by     INTEGER DEFAULT 0,
+                status         TEXT    DEFAULT 'open',
+                created_at     REAL    NOT NULL,
+                closed_at      REAL    DEFAULT 0,
+                closed_by      INTEGER DEFAULT 0,
+                transcript_url TEXT    DEFAULT ''
+            )
+        """)
+
         await db.commit()
 
         # Safe migration: add pet streak columns
@@ -1359,3 +1418,302 @@ async def remove_panel_entry(entry_id: int) -> None:
     async with aiosqlite.connect(DB_NAME) as db:
         await db.execute("DELETE FROM reaction_role_entries WHERE id = ?", (entry_id,))
         await db.commit()
+
+
+# ── SUPPORT TICKET SYSTEM ──
+
+async def get_ticket_config(guild_id: int) -> dict:
+    async with aiosqlite.connect(DB_NAME) as db:
+        async with db.execute("SELECT * FROM ticket_config WHERE guild_id = ?", (guild_id,)) as cursor:
+            row = await cursor.fetchone()
+            if not row:
+                return {
+                    "guild_id": guild_id, "enabled": 0, "log_channel_id": 0,
+                    "category_id": 0, "naming_format": "ticket-{number}",
+                    "next_ticket_number": 1, "dm_transcript": 0, "claim_lock": 0,
+                }
+            return {
+                "guild_id": row[0], "enabled": row[1], "log_channel_id": row[2],
+                "category_id": row[3], "naming_format": row[4],
+                "next_ticket_number": row[5], "dm_transcript": row[6], "claim_lock": row[7],
+            }
+
+
+async def upsert_ticket_config(guild_id: int, **kwargs) -> None:
+    cfg = await get_ticket_config(guild_id)
+    cfg.update(kwargs)
+    async with aiosqlite.connect(DB_NAME) as db:
+        await db.execute(
+            """INSERT INTO ticket_config
+               (guild_id, enabled, log_channel_id, category_id, naming_format, next_ticket_number, dm_transcript, claim_lock)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+               ON CONFLICT(guild_id) DO UPDATE SET
+               enabled=excluded.enabled, log_channel_id=excluded.log_channel_id,
+               category_id=excluded.category_id, naming_format=excluded.naming_format,
+               next_ticket_number=excluded.next_ticket_number, dm_transcript=excluded.dm_transcript,
+               claim_lock=excluded.claim_lock""",
+            (guild_id, cfg["enabled"], cfg["log_channel_id"], cfg["category_id"],
+             cfg["naming_format"], cfg["next_ticket_number"], cfg["dm_transcript"], cfg["claim_lock"]),
+        )
+        await db.commit()
+
+
+async def increment_ticket_number(guild_id: int) -> int:
+    async with aiosqlite.connect(DB_NAME) as db:
+        # Ensure row exists
+        await db.execute(
+            "INSERT OR IGNORE INTO ticket_config (guild_id) VALUES (?)", (guild_id,)
+        )
+        async with db.execute(
+            "SELECT next_ticket_number FROM ticket_config WHERE guild_id = ?", (guild_id,)
+        ) as cursor:
+            row = await cursor.fetchone()
+            num = row[0]
+        await db.execute(
+            "UPDATE ticket_config SET next_ticket_number = next_ticket_number + 1 WHERE guild_id = ?",
+            (guild_id,),
+        )
+        await db.commit()
+        return num
+
+
+# ── Ticket Panels ──
+
+async def get_ticket_panels(guild_id: int) -> list:
+    async with aiosqlite.connect(DB_NAME) as db:
+        async with db.execute(
+            "SELECT id, guild_id, channel_id, message_id, title, description, color, button_label, button_emoji, button_style FROM ticket_panels WHERE guild_id = ?",
+            (guild_id,),
+        ) as cursor:
+            panels = []
+            for row in await cursor.fetchall():
+                panel = {
+                    "id": row[0], "guild_id": row[1], "channel_id": row[2],
+                    "message_id": row[3], "title": row[4], "description": row[5],
+                    "color": row[6], "button_label": row[7], "button_emoji": row[8],
+                    "button_style": row[9],
+                }
+                async with db.execute(
+                    "SELECT id, panel_id, name, emoji, description, opening_message, staff_roles, ticket_limit, form_fields FROM ticket_categories WHERE panel_id = ?",
+                    (panel["id"],),
+                ) as cat_cur:
+                    panel["categories"] = [
+                        {
+                            "id": c[0], "panel_id": c[1], "name": c[2], "emoji": c[3],
+                            "description": c[4], "opening_message": c[5],
+                            "staff_roles": json.loads(c[6]), "ticket_limit": c[7],
+                            "form_fields": json.loads(c[8]),
+                        }
+                        for c in await cat_cur.fetchall()
+                    ]
+                panels.append(panel)
+            return panels
+
+
+async def get_ticket_panel(panel_id: int) -> dict | None:
+    async with aiosqlite.connect(DB_NAME) as db:
+        async with db.execute(
+            "SELECT id, guild_id, channel_id, message_id, title, description, color, button_label, button_emoji, button_style FROM ticket_panels WHERE id = ?",
+            (panel_id,),
+        ) as cursor:
+            row = await cursor.fetchone()
+            if not row:
+                return None
+            panel = {
+                "id": row[0], "guild_id": row[1], "channel_id": row[2],
+                "message_id": row[3], "title": row[4], "description": row[5],
+                "color": row[6], "button_label": row[7], "button_emoji": row[8],
+                "button_style": row[9],
+            }
+        async with db.execute(
+            "SELECT id, panel_id, name, emoji, description, opening_message, staff_roles, ticket_limit, form_fields FROM ticket_categories WHERE panel_id = ?",
+            (panel_id,),
+        ) as cat_cur:
+            panel["categories"] = [
+                {
+                    "id": c[0], "panel_id": c[1], "name": c[2], "emoji": c[3],
+                    "description": c[4], "opening_message": c[5],
+                    "staff_roles": json.loads(c[6]), "ticket_limit": c[7],
+                    "form_fields": json.loads(c[8]),
+                }
+                for c in await cat_cur.fetchall()
+            ]
+        return panel
+
+
+async def get_all_ticket_panel_ids() -> list:
+    async with aiosqlite.connect(DB_NAME) as db:
+        async with db.execute("SELECT id FROM ticket_panels") as cursor:
+            return [row[0] for row in await cursor.fetchall()]
+
+
+async def create_ticket_panel(guild_id: int, channel_id: int, message_id: int,
+                              title: str, description: str, color: int,
+                              button_label: str, button_emoji: str, button_style: int) -> int:
+    async with aiosqlite.connect(DB_NAME) as db:
+        cursor = await db.execute(
+            """INSERT INTO ticket_panels
+               (guild_id, channel_id, message_id, title, description, color, button_label, button_emoji, button_style)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (guild_id, channel_id, message_id, title, description, color, button_label, button_emoji, button_style),
+        )
+        await db.commit()
+        return cursor.lastrowid
+
+
+async def update_ticket_panel(panel_id: int, **kwargs) -> None:
+    allowed = {"title", "description", "color", "button_label", "button_emoji", "button_style", "channel_id", "message_id"}
+    updates = {k: v for k, v in kwargs.items() if k in allowed}
+    if not updates:
+        return
+    set_clause = ", ".join(f"{k} = ?" for k in updates)
+    async with aiosqlite.connect(DB_NAME) as db:
+        await db.execute(f"UPDATE ticket_panels SET {set_clause} WHERE id = ?",
+                         (*updates.values(), panel_id))
+        await db.commit()
+
+
+async def delete_ticket_panel(panel_id: int) -> None:
+    async with aiosqlite.connect(DB_NAME) as db:
+        await db.execute("DELETE FROM ticket_categories WHERE panel_id = ?", (panel_id,))
+        await db.execute("DELETE FROM ticket_panels WHERE id = ?", (panel_id,))
+        await db.commit()
+
+
+# ── Ticket Categories ──
+
+async def get_ticket_categories(panel_id: int) -> list:
+    async with aiosqlite.connect(DB_NAME) as db:
+        async with db.execute(
+            "SELECT id, panel_id, name, emoji, description, opening_message, staff_roles, ticket_limit, form_fields FROM ticket_categories WHERE panel_id = ?",
+            (panel_id,),
+        ) as cursor:
+            return [
+                {
+                    "id": c[0], "panel_id": c[1], "name": c[2], "emoji": c[3],
+                    "description": c[4], "opening_message": c[5],
+                    "staff_roles": json.loads(c[6]), "ticket_limit": c[7],
+                    "form_fields": json.loads(c[8]),
+                }
+                for c in await cursor.fetchall()
+            ]
+
+
+async def create_ticket_category(panel_id: int, name: str, emoji: str = "📩",
+                                 description: str = "", opening_message: str = "",
+                                 staff_roles: list = None, ticket_limit: int = 1,
+                                 form_fields: list = None) -> int:
+    async with aiosqlite.connect(DB_NAME) as db:
+        cursor = await db.execute(
+            """INSERT INTO ticket_categories
+               (panel_id, name, emoji, description, opening_message, staff_roles, ticket_limit, form_fields)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+            (panel_id, name, emoji, description, opening_message,
+             json.dumps(staff_roles or []), ticket_limit, json.dumps(form_fields or [])),
+        )
+        await db.commit()
+        return cursor.lastrowid
+
+
+async def update_ticket_category(category_id: int, **kwargs) -> None:
+    allowed = {"name", "emoji", "description", "opening_message", "staff_roles", "ticket_limit", "form_fields"}
+    updates = {}
+    for k, v in kwargs.items():
+        if k not in allowed:
+            continue
+        if k in ("staff_roles", "form_fields"):
+            updates[k] = json.dumps(v)
+        else:
+            updates[k] = v
+    if not updates:
+        return
+    set_clause = ", ".join(f"{k} = ?" for k in updates)
+    async with aiosqlite.connect(DB_NAME) as db:
+        await db.execute(f"UPDATE ticket_categories SET {set_clause} WHERE id = ?",
+                         (*updates.values(), category_id))
+        await db.commit()
+
+
+async def delete_ticket_category(category_id: int) -> None:
+    async with aiosqlite.connect(DB_NAME) as db:
+        await db.execute("DELETE FROM ticket_categories WHERE id = ?", (category_id,))
+        await db.commit()
+
+
+# ── Support Tickets ──
+
+async def create_support_ticket(guild_id: int, channel_id: int, user_id: int,
+                                category_id: int, panel_id: int, ticket_number: int) -> int:
+    import time
+    async with aiosqlite.connect(DB_NAME) as db:
+        cursor = await db.execute(
+            """INSERT INTO support_tickets
+               (guild_id, channel_id, user_id, category_id, panel_id, ticket_number, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            (guild_id, channel_id, user_id, category_id, panel_id, ticket_number, time.time()),
+        )
+        await db.commit()
+        return cursor.lastrowid
+
+
+async def get_support_ticket_by_channel(channel_id: int) -> dict | None:
+    async with aiosqlite.connect(DB_NAME) as db:
+        async with db.execute(
+            "SELECT id, guild_id, channel_id, user_id, category_id, panel_id, ticket_number, claimed_by, status, created_at, closed_at, closed_by, transcript_url FROM support_tickets WHERE channel_id = ?",
+            (channel_id,),
+        ) as cursor:
+            row = await cursor.fetchone()
+            if not row:
+                return None
+            return {
+                "id": row[0], "guild_id": row[1], "channel_id": row[2],
+                "user_id": row[3], "category_id": row[4], "panel_id": row[5],
+                "ticket_number": row[6], "claimed_by": row[7], "status": row[8],
+                "created_at": row[9], "closed_at": row[10], "closed_by": row[11],
+                "transcript_url": row[12],
+            }
+
+
+async def claim_support_ticket(channel_id: int, claimed_by: int) -> None:
+    async with aiosqlite.connect(DB_NAME) as db:
+        await db.execute(
+            "UPDATE support_tickets SET claimed_by = ?, status = 'claimed' WHERE channel_id = ?",
+            (claimed_by, channel_id),
+        )
+        await db.commit()
+
+
+async def close_support_ticket(channel_id: int, closed_by: int, transcript_url: str = "") -> None:
+    import time
+    async with aiosqlite.connect(DB_NAME) as db:
+        await db.execute(
+            "UPDATE support_tickets SET status = 'closed', closed_at = ?, closed_by = ?, transcript_url = ? WHERE channel_id = ?",
+            (time.time(), closed_by, transcript_url, channel_id),
+        )
+        await db.commit()
+
+
+async def get_open_ticket_count(user_id: int, category_id: int) -> int:
+    async with aiosqlite.connect(DB_NAME) as db:
+        async with db.execute(
+            "SELECT COUNT(*) FROM support_tickets WHERE user_id = ? AND category_id = ? AND status != 'closed'",
+            (user_id, category_id),
+        ) as cursor:
+            row = await cursor.fetchone()
+            return row[0]
+
+
+async def get_guild_tickets(guild_id: int, status: str = None) -> list:
+    async with aiosqlite.connect(DB_NAME) as db:
+        if status:
+            sql = "SELECT id, channel_id, user_id, category_id, ticket_number, claimed_by, status, created_at FROM support_tickets WHERE guild_id = ? AND status = ? ORDER BY created_at DESC"
+            params = (guild_id, status)
+        else:
+            sql = "SELECT id, channel_id, user_id, category_id, ticket_number, claimed_by, status, created_at FROM support_tickets WHERE guild_id = ? ORDER BY created_at DESC"
+            params = (guild_id,)
+        async with db.execute(sql, params) as cursor:
+            return [
+                {"id": r[0], "channel_id": r[1], "user_id": r[2], "category_id": r[3],
+                 "ticket_number": r[4], "claimed_by": r[5], "status": r[6], "created_at": r[7]}
+                for r in await cursor.fetchall()
+            ]

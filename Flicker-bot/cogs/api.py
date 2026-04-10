@@ -40,6 +40,18 @@ from database import (
     delete_reaction_role_panel,
     add_panel_entry,
     remove_panel_entry,
+    get_ticket_config,
+    upsert_ticket_config,
+    get_ticket_panels,
+    get_ticket_panel,
+    create_ticket_panel as db_create_ticket_panel,
+    update_ticket_panel as db_update_ticket_panel,
+    delete_ticket_panel as db_delete_ticket_panel,
+    get_ticket_categories,
+    create_ticket_category as db_create_ticket_category,
+    update_ticket_category as db_update_ticket_category,
+    delete_ticket_category as db_delete_ticket_category,
+    get_guild_tickets,
 )
 
 BUILTIN_GROUPS = [
@@ -309,6 +321,22 @@ class Api(commands.Cog):
         app.router.add_post("/api/reaction-roles/{guild_id}/{panel_id}/entries", self.handle_add_reaction_role_entry)
         app.router.add_route("OPTIONS", "/api/reaction-roles/{guild_id}/{panel_id}/entries/{entry_id}", self.handle_preflight)
         app.router.add_delete("/api/reaction-roles/{guild_id}/{panel_id}/entries/{entry_id}", self.handle_remove_reaction_role_entry)
+
+        # Support tickets
+        app.router.add_route("OPTIONS", "/api/tickets/{guild_id}", self.handle_preflight)
+        app.router.add_get("/api/tickets/{guild_id}", self.handle_get_tickets)
+        app.router.add_route("OPTIONS", "/api/tickets/{guild_id}/config", self.handle_preflight)
+        app.router.add_post("/api/tickets/{guild_id}/config", self.handle_save_ticket_config)
+        app.router.add_route("OPTIONS", "/api/tickets/{guild_id}/panels", self.handle_preflight)
+        app.router.add_post("/api/tickets/{guild_id}/panels", self.handle_create_ticket_panel)
+        app.router.add_route("OPTIONS", "/api/tickets/{guild_id}/panels/{panel_id}", self.handle_preflight)
+        app.router.add_patch("/api/tickets/{guild_id}/panels/{panel_id}", self.handle_update_ticket_panel)
+        app.router.add_delete("/api/tickets/{guild_id}/panels/{panel_id}", self.handle_delete_ticket_panel)
+        app.router.add_route("OPTIONS", "/api/tickets/{guild_id}/panels/{panel_id}/categories", self.handle_preflight)
+        app.router.add_post("/api/tickets/{guild_id}/panels/{panel_id}/categories", self.handle_create_ticket_category)
+        app.router.add_route("OPTIONS", "/api/tickets/{guild_id}/panels/{panel_id}/categories/{cat_id}", self.handle_preflight)
+        app.router.add_patch("/api/tickets/{guild_id}/panels/{panel_id}/categories/{cat_id}", self.handle_update_ticket_category)
+        app.router.add_delete("/api/tickets/{guild_id}/panels/{panel_id}/categories/{cat_id}", self.handle_delete_ticket_category)
 
         self.runner = web.AppRunner(app)
         await self.runner.setup()
@@ -1218,6 +1246,287 @@ class Api(commands.Cog):
             rr_cog.invalidate_cache(panel["message_id"])
 
         return web.json_response({"ok": True}, headers=_get_cors_headers(request))
+
+
+    # ── Support Tickets ────────────────────────────────────────────────────
+
+    async def handle_get_tickets(self, request: web.Request):
+        guild_id = int(request.match_info["guild_id"])
+        _require_auth(request, guild_id)
+
+        config = await get_ticket_config(guild_id)
+        panels = await get_ticket_panels(guild_id)
+        open_tickets = await get_guild_tickets(guild_id, status="open")
+        claimed_tickets = await get_guild_tickets(guild_id, status="claimed")
+
+        # Serialise panels — convert channel_id/message_id to str for JS
+        panel_list = []
+        for p in panels:
+            pd = dict(p)
+            pd["channel_id"] = str(p["channel_id"])
+            pd["message_id"] = str(p["message_id"])
+            for cat in pd.get("categories", []):
+                cat["staff_roles"] = [str(r) for r in cat.get("staff_roles", [])]
+            panel_list.append(pd)
+
+        return web.json_response({
+            "config": config,
+            "panels": panel_list,
+            "tickets_summary": {
+                "open": len(open_tickets) + len(claimed_tickets),
+                "total": len(await get_guild_tickets(guild_id)),
+            },
+        }, headers=_get_cors_headers(request))
+
+    async def handle_save_ticket_config(self, request: web.Request):
+        guild_id = int(request.match_info["guild_id"])
+        _require_auth(request, guild_id)
+
+        try:
+            body = await request.json()
+        except Exception:
+            raise web.HTTPBadRequest(reason="Invalid JSON")
+
+        allowed_keys = {"enabled", "log_channel_id", "category_id", "naming_format", "dm_transcript", "claim_lock"}
+        updates = {k: v for k, v in body.items() if k in allowed_keys}
+
+        # Convert string IDs to int
+        for k in ("log_channel_id", "category_id"):
+            if k in updates:
+                updates[k] = int(updates[k]) if updates[k] else 0
+
+        await upsert_ticket_config(guild_id, **updates)
+        return web.json_response({"ok": True}, headers=_get_cors_headers(request))
+
+    async def handle_create_ticket_panel(self, request: web.Request):
+        guild_id = int(request.match_info["guild_id"])
+        _require_auth(request, guild_id)
+
+        try:
+            body = await request.json()
+        except Exception:
+            raise web.HTTPBadRequest(reason="Invalid JSON")
+
+        channel_id = int(body.get("channel_id", 0))
+        if not channel_id:
+            raise web.HTTPBadRequest(reason="channel_id required")
+
+        title = body.get("title", "Support Tickets").strip()
+        description = body.get("description", "Click below to open a ticket.").strip()
+        color = int(body.get("color", 5865207))
+        button_label = body.get("button_label", "Open Ticket").strip()
+        button_emoji = body.get("button_emoji", "🎫").strip()
+        button_style = int(body.get("button_style", 1))
+
+        guild = self.bot.get_guild(guild_id)
+        if not guild:
+            raise web.HTTPNotFound(reason="Guild not found")
+        channel = guild.get_channel(channel_id)
+        if not channel:
+            raise web.HTTPNotFound(reason="Channel not found")
+
+        # Create DB entry with temp message_id
+        panel_id = await db_create_ticket_panel(
+            guild_id, channel_id, 0, title, description, color,
+            button_label, button_emoji, button_style,
+        )
+
+        # Build and post embed
+        panel = await get_ticket_panel(panel_id)
+        from cogs.tickets import TicketPanelView, _build_panel_embed
+        embed = _build_panel_embed(panel, panel.get("categories", []))
+        view = TicketPanelView(panel_id=panel_id, label=button_label,
+                               emoji=button_emoji, style=button_style)
+        msg = await channel.send(embed=embed, view=view)
+
+        # Update message_id
+        await db_update_ticket_panel(panel_id, message_id=msg.id)
+
+        # Register persistent view
+        self.bot.add_view(view)
+
+        return web.json_response(
+            {"ok": True, "panel_id": panel_id, "message_id": str(msg.id)},
+            status=201,
+            headers=_get_cors_headers(request),
+        )
+
+    async def handle_update_ticket_panel(self, request: web.Request):
+        guild_id = int(request.match_info["guild_id"])
+        _require_auth(request, guild_id)
+        panel_id = int(request.match_info["panel_id"])
+
+        panel = await get_ticket_panel(panel_id)
+        if not panel or panel["guild_id"] != guild_id:
+            raise web.HTTPNotFound(reason="Panel not found")
+
+        try:
+            body = await request.json()
+        except Exception:
+            raise web.HTTPBadRequest(reason="Invalid JSON")
+
+        allowed = {"title", "description", "color", "button_label", "button_emoji", "button_style"}
+        updates = {}
+        for k, v in body.items():
+            if k in allowed:
+                updates[k] = int(v) if k in ("color", "button_style") else v
+
+        if updates:
+            await db_update_ticket_panel(panel_id, **updates)
+
+        # Refresh and update Discord message
+        panel = await get_ticket_panel(panel_id)
+        guild = self.bot.get_guild(guild_id)
+        if guild:
+            channel = guild.get_channel(panel["channel_id"])
+            if channel:
+                try:
+                    msg = await channel.fetch_message(panel["message_id"])
+                    from cogs.tickets import TicketPanelView, _build_panel_embed
+                    embed = _build_panel_embed(panel, panel.get("categories", []))
+                    view = TicketPanelView(panel_id=panel_id, label=panel["button_label"],
+                                           emoji=panel["button_emoji"], style=panel["button_style"])
+                    await msg.edit(embed=embed, view=view)
+                    self.bot.add_view(view)
+                except Exception:
+                    pass
+
+        return web.json_response({"ok": True}, headers=_get_cors_headers(request))
+
+    async def handle_delete_ticket_panel(self, request: web.Request):
+        guild_id = int(request.match_info["guild_id"])
+        _require_auth(request, guild_id)
+        panel_id = int(request.match_info["panel_id"])
+
+        panel = await get_ticket_panel(panel_id)
+        if not panel or panel["guild_id"] != guild_id:
+            raise web.HTTPNotFound(reason="Panel not found")
+
+        # Delete Discord message
+        guild = self.bot.get_guild(guild_id)
+        if guild:
+            channel = guild.get_channel(panel["channel_id"])
+            if channel:
+                try:
+                    msg = await channel.fetch_message(panel["message_id"])
+                    await msg.delete()
+                except Exception:
+                    pass
+
+        await db_delete_ticket_panel(panel_id)
+        return web.json_response({"ok": True}, headers=_get_cors_headers(request))
+
+    async def handle_create_ticket_category(self, request: web.Request):
+        guild_id = int(request.match_info["guild_id"])
+        _require_auth(request, guild_id)
+        panel_id = int(request.match_info["panel_id"])
+
+        panel = await get_ticket_panel(panel_id)
+        if not panel or panel["guild_id"] != guild_id:
+            raise web.HTTPNotFound(reason="Panel not found")
+
+        try:
+            body = await request.json()
+        except Exception:
+            raise web.HTTPBadRequest(reason="Invalid JSON")
+
+        name = body.get("name", "").strip()
+        if not name:
+            raise web.HTTPBadRequest(reason="name required")
+
+        staff_roles = [int(r) for r in body.get("staff_roles", [])]
+        form_fields = body.get("form_fields", [])
+        if len(form_fields) > 5:
+            form_fields = form_fields[:5]
+
+        cat_id = await db_create_ticket_category(
+            panel_id, name,
+            emoji=body.get("emoji", "📩").strip() or "📩",
+            description=body.get("description", "").strip(),
+            opening_message=body.get("opening_message", "").strip(),
+            staff_roles=staff_roles,
+            ticket_limit=int(body.get("ticket_limit", 1)),
+            form_fields=form_fields,
+        )
+
+        # Update panel Discord message to show new category
+        await self._refresh_panel_message(guild_id, panel_id)
+
+        return web.json_response(
+            {"ok": True, "category_id": cat_id},
+            status=201,
+            headers=_get_cors_headers(request),
+        )
+
+    async def handle_update_ticket_category(self, request: web.Request):
+        guild_id = int(request.match_info["guild_id"])
+        _require_auth(request, guild_id)
+        panel_id = int(request.match_info["panel_id"])
+        cat_id = int(request.match_info["cat_id"])
+
+        panel = await get_ticket_panel(panel_id)
+        if not panel or panel["guild_id"] != guild_id:
+            raise web.HTTPNotFound(reason="Panel not found")
+        cat = next((c for c in panel.get("categories", []) if c["id"] == cat_id), None)
+        if not cat:
+            raise web.HTTPNotFound(reason="Category not found")
+
+        try:
+            body = await request.json()
+        except Exception:
+            raise web.HTTPBadRequest(reason="Invalid JSON")
+
+        updates = {}
+        for k in ("name", "emoji", "description", "opening_message", "ticket_limit"):
+            if k in body:
+                updates[k] = int(body[k]) if k == "ticket_limit" else body[k]
+        if "staff_roles" in body:
+            updates["staff_roles"] = [int(r) for r in body["staff_roles"]]
+        if "form_fields" in body:
+            ff = body["form_fields"]
+            updates["form_fields"] = ff[:5] if len(ff) > 5 else ff
+
+        if updates:
+            await db_update_ticket_category(cat_id, **updates)
+
+        await self._refresh_panel_message(guild_id, panel_id)
+        return web.json_response({"ok": True}, headers=_get_cors_headers(request))
+
+    async def handle_delete_ticket_category(self, request: web.Request):
+        guild_id = int(request.match_info["guild_id"])
+        _require_auth(request, guild_id)
+        panel_id = int(request.match_info["panel_id"])
+        cat_id = int(request.match_info["cat_id"])
+
+        panel = await get_ticket_panel(panel_id)
+        if not panel or panel["guild_id"] != guild_id:
+            raise web.HTTPNotFound(reason="Panel not found")
+
+        await db_delete_ticket_category(cat_id)
+        await self._refresh_panel_message(guild_id, panel_id)
+        return web.json_response({"ok": True}, headers=_get_cors_headers(request))
+
+    async def _refresh_panel_message(self, guild_id: int, panel_id: int):
+        """Re-fetch panel data and edit its Discord message."""
+        panel = await get_ticket_panel(panel_id)
+        if not panel:
+            return
+        guild = self.bot.get_guild(guild_id)
+        if not guild:
+            return
+        channel = guild.get_channel(panel["channel_id"])
+        if not channel:
+            return
+        try:
+            msg = await channel.fetch_message(panel["message_id"])
+            from cogs.tickets import TicketPanelView, _build_panel_embed
+            embed = _build_panel_embed(panel, panel.get("categories", []))
+            view = TicketPanelView(panel_id=panel_id, label=panel["button_label"],
+                                   emoji=panel["button_emoji"], style=panel["button_style"])
+            await msg.edit(embed=embed, view=view)
+            self.bot.add_view(view)
+        except Exception:
+            pass
 
 
 async def setup(bot):
