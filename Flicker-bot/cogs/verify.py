@@ -78,6 +78,24 @@ class VerifyView(discord.ui.View):
         else:
             await interaction.response.send_message("⚠️ Error: Verified role missing. Please ping staff.", ephemeral=True)
 
+class SimpleVerifyView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=None)
+
+    @discord.ui.button(label="✅ I have read the rules", style=discord.ButtonStyle.green, custom_id="verify:simple")
+    async def btn_verify(self, interaction: discord.Interaction, button: discord.ui.Button):
+        role_id = await get_verify_role(interaction.guild.id)
+        if not role_id:
+            return await interaction.response.send_message("⚠️ System not set up. An admin needs to run !verify.", ephemeral=True)
+
+        role = interaction.guild.get_role(role_id)
+        if role:
+            await interaction.user.add_roles(role)
+            await interaction.response.send_message("✅ Thank you for reading the rules! You have been verified.", ephemeral=True)
+        else:
+            await interaction.response.send_message("⚠️ Error: Verified role missing. Please ping staff.", ephemeral=True)
+
+
 class Verification(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
@@ -85,15 +103,19 @@ class Verification(commands.Cog):
     @commands.Cog.listener()
     async def on_ready(self):
         self.bot.add_view(VerifyView())
+        self.bot.add_view(SimpleVerifyView())
         print("🛡️ Verification System Loaded.")
 
     @commands.command(name="verify")
     @commands.has_permissions(administrator=True)
-    async def setup_verify(self, ctx, channel: discord.TextChannel, role: discord.Role):
+    async def setup_verify(self, ctx, channel: discord.TextChannel, role: discord.Role, mode: str = "quiz"):
         """
         Sets up the verification embed.
-        Usage: !verify #channel @VerifiedRole
+        Usage: !verify #channel @VerifiedRole [quiz|simple]
         """
+        if mode not in ("quiz", "simple"):
+            return await ctx.send("⚠️ Invalid mode. Use `quiz` (default) or `simple`.")
+
         await set_verify_role(ctx.guild.id, role.id)
 
         embed = discord.Embed(
@@ -107,8 +129,9 @@ class Verification(commands.Cog):
         )
         embed.set_thumbnail(url=ctx.guild.icon.url if ctx.guild.icon else None)
 
-        await channel.send(embed=embed, view=VerifyView())
-        await ctx.send(f"✅ Verification gate has been set up in {channel.mention} using the **{role.name}** role!")
+        view = SimpleVerifyView() if mode == "simple" else VerifyView()
+        await channel.send(embed=embed, view=view)
+        await ctx.send(f"✅ Verification gate has been set up in {channel.mention} using the **{role.name}** role! (Mode: {mode})")
 
 async def setup(bot):
     await bot.add_cog(Verification(bot))
